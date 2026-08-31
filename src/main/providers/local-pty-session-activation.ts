@@ -28,11 +28,17 @@ import {
   ptyTerminationMode,
   ptyWorktreeId,
   ptyWslDistroById,
+  ptyWslShellAnchors,
   startupIngressByPty
 } from './local-pty-provider-state'
 import { createLocalPtyShellReadinessSession } from './local-pty-shell-readiness-session'
 import { destroyPtyProcess, createPtyPhysicalExit } from './local-pty-termination'
 import { writeStartupCommandWhenShellReady } from './local-pty-shell-ready-startup-command'
+import {
+  createShellStartupIdentityScanState,
+  scanForShellStartupIdentity,
+  type ShellStartupIdentityScanState
+} from '../shell-startup-identity-scanner'
 import type { PtySpawnOptions, PtySpawnResult } from './types'
 
 export function activateLocalPtySession(args: {
@@ -105,6 +111,11 @@ export function activateLocalPtySession(args: {
     onEmission: emitIngressData
   })
   startupIngressByPty.set(id, startupIngress)
+  // A Windows host only sees wsl.exe. Keep the guest PID marker separate from
+  // the shell-ready scanner so WSL panes without a startup command are still
+  // anchored, and strip it before bytes reach xterm/the user shell.
+  let wslIdentityScanState: ShellStartupIdentityScanState | null =
+    process.platform === 'win32' && spawnedWslDistro ? createShellStartupIdentityScanState() : null
 
   // Shell-ready startup command support
   const readiness = createLocalPtyShellReadinessSession({
@@ -117,7 +128,23 @@ export function activateLocalPtySession(args: {
   })
   const disposables: { dispose: () => void }[] = []
   const onDataDisposable = proc.onData((rawData) => {
-    readiness.acceptData(rawData)
+    let data = rawData
+    if (wslIdentityScanState) {
+      const scanned = scanForShellStartupIdentity(wslIdentityScanState, data)
+      data = scanned.output
+      if (scanned.shellIdentity) {
+        // The marker carries boot/start/TTY fencing. A legacy PID-only marker
+        // is intentionally ignored and remains unverifiable.
+        if (scanned.shellIdentity.distro.toLowerCase() === spawnedWslDistro!.toLowerCase()) {
+          ptyWslShellAnchors.set(id, scanned.shellIdentity)
+        }
+        wslIdentityScanState = null
+      } else if (scanned.shellPid) {
+        // Consume legacy PID-only markers without accepting them as evidence.
+        wslIdentityScanState = null
+      }
+    }
+    readiness.acceptData(data)
   })
   if (onDataDisposable) {
     disposables.push(onDataDisposable)

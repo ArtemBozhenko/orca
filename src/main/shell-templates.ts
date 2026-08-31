@@ -39,7 +39,31 @@ __orca_has_feature() { [[ "$_orca_shell_features" == *",$1,"* ]]; }`
 
 // Why one line usable by both languages: __orca_has_feature is defined with the
 // same name and semantics in the zsh and bash channel blocks above.
-export const SHELL_STARTUP_IDENTITY_MARKER_BLOCK = `__orca_has_feature identity && printf "\\033]777;orca-shell-start:%s\\007" "$$"`
+/** Emits a fenced WSL shell identity. The marker is output-only; no identity
+ * value is put in wsl.exe argv where another Windows process could read it. */
+export const SHELL_STARTUP_IDENTITY_MARKER_BLOCK = `if __orca_has_feature identity; then
+  if [ -n "\${WSL_DISTRO_NAME:-}" ]; then
+    __orca_emit_shell_identity() {
+      local _orca_boot _orca_stat _orca_tail _orca_start _orca_tty _orca_distro
+      _orca_boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null) || return 0
+      _orca_stat=$(cat /proc/$$/stat 2>/dev/null) || return 0
+      _orca_tail=\${_orca_stat##*) }
+      set -- $_orca_tail
+      _orca_start=\${20:-}
+      _orca_tty=$(tty 2>/dev/null) || return 0
+      _orca_distro=\${WSL_DISTRO_NAME:-}
+      case "$_orca_boot" in *[!A-Fa-f0-9-]*|"") return 0 ;; esac
+      case "$_orca_distro" in ""|*[!A-Za-z0-9._-]*) return 0 ;; esac
+      case "$_orca_start" in ""|*[!0-9]*) return 0 ;; esac
+      case "$_orca_tty" in /dev/pts/[0-9]*) ;; *) return 0 ;; esac
+      printf "\\033]777;orca-shell-start:v2:%s:%s:%s:%s:%s\\007" "$_orca_distro" "$_orca_boot" "$$" "$_orca_start" "$_orca_tty"
+    }
+    __orca_emit_shell_identity
+    unset -f __orca_emit_shell_identity
+  else
+    printf "\\033]777;orca-shell-start:%s\\007" "$$"
+  fi
+fi`
 
 /**
  * The first executable lines of the wrapper: give ZDOTDIR back to the user.

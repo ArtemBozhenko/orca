@@ -16,12 +16,19 @@ import {
   ptyTerminalHandle,
   ptyWorktreeId,
   ptyWslDistroById,
+  ptyWslShellAnchors,
   startupIngressByPty,
   type DataCallback,
   type ExitCallback
 } from './local-pty-provider-state'
 import type { LocalPtyProviderOptions } from './local-pty-provider-types'
 import type { PtyProcessInfo } from './types'
+import {
+  readWslGuestProcessInventory,
+  resolveWslGuestForegroundProcess,
+  type WslGuestProcessInventoryRead
+} from './wsl-guest-process-inventory'
+import type { ForegroundProcessEvidence } from '../../shared/foreground-process-evidence'
 
 export function writeLocalPty(id: string, data: string): boolean {
   // Cooked PTYs echo private DSR/OSC replies; CPR/DA stay immediate unless one of
@@ -116,15 +123,72 @@ export function closeLocalPtyStartupQueryAuthority(id: string): number {
 }
 
 export async function listLocalPtyProcesses(): Promise<PtyProcessInfo[]> {
-  return Array.from(ptyProcesses.entries()).map(([id, proc]) => ({
-    id,
-    ...(ptyIncarnations.get(id) ? { incarnationId: ptyIncarnations.get(id) } : {}),
-    cwd: ptyInitialCwd.get(id) ?? '',
-    title: proc.process || ptyShellName.get(id) || 'shell',
-    ...(ptyWorktreeId.get(id) ? { worktreeId: ptyWorktreeId.get(id) } : {}),
-    ...(ptyTerminalHandle.get(id) ? { terminalHandle: ptyTerminalHandle.get(id) } : {}),
-    ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {})
-  }))
+  const entries = Array.from(ptyProcesses.entries())
+  const evidenceEpoch = Date.now()
+  const wslByDistro = new Map<string, string[]>()
+  for (const [id] of entries) {
+    const distro = ptyWslDistroById.get(id)
+    if (distro) {
+      const ids = wslByDistro.get(distro) ?? []
+      ids.push(id)
+      wslByDistro.set(distro, ids)
+    }
+  }
+  const inventories = new Map<string, WslGuestProcessInventoryRead>()
+  await Promise.all(
+    [...wslByDistro.keys()].map(async (distro) => {
+      inventories.set(distro, await readWslGuestProcessInventory(distro))
+    })
+  )
+
+  return entries.map(([id, proc]) => {
+    const distro = ptyWslDistroById.get(id)
+    let title = proc.process || ptyShellName.get(id) || 'shell'
+    let foregroundProcessEvidence: ForegroundProcessEvidence | undefined
+    if (distro) {
+      const read = inventories.get(distro)
+      const anchor = ptyWslShellAnchors.get(id)
+      const resolution =
+        read?.status === 'ok' && anchor
+          ? resolveWslGuestForegroundProcess(read.inventory, anchor)
+          : {
+              status: 'unverifiable' as const,
+              reason: read?.status === 'unverifiable' ? read.reason : 'anchor_missing'
+            }
+      foregroundProcessEvidence =
+        resolution.status === 'live'
+          ? {
+              verdict: 'live',
+              processName: resolution.processName,
+              authorityGeneration: ptyIncarnations.get(id) ?? 'local-wsl',
+              observationEpoch: evidenceEpoch,
+              capturedAgeMs: 0
+            }
+          : {
+              verdict: 'unverifiable',
+              reason: resolution.reason,
+              authorityGeneration: ptyIncarnations.get(id) ?? 'local-wsl',
+              observationEpoch: evidenceEpoch,
+              capturedAgeMs: 0
+            }
+      if (resolution.status === 'live') {
+        ptyWslShellAnchors.set(id, resolution.anchor)
+        if (resolution.processName) {
+          title = resolution.processName
+        }
+      }
+    }
+    return {
+      id,
+      ...(ptyIncarnations.get(id) ? { incarnationId: ptyIncarnations.get(id) } : {}),
+      cwd: ptyInitialCwd.get(id) ?? '',
+      title,
+      ...(ptyWorktreeId.get(id) ? { worktreeId: ptyWorktreeId.get(id) } : {}),
+      ...(ptyTerminalHandle.get(id) ? { terminalHandle: ptyTerminalHandle.get(id) } : {}),
+      ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {}),
+      ...(foregroundProcessEvidence ? { foregroundProcessEvidence } : {})
+    }
+  })
 }
 
 export async function getDefaultLocalPtyShell(

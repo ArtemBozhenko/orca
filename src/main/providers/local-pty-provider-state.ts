@@ -3,6 +3,7 @@ import type { PhysicalExitTracker } from '../../shared/physical-exit-tracker'
 import type { PtyStartupIngress } from '../../shared/pty-startup-ingress'
 import type { TerminalExitCause } from '../../shared/terminal-exit-cause'
 import { normalizeLocalCallerSessionId } from './local-pty-launch-helpers'
+import type { WslShellProcessAnchor } from '../../shared/wsl-shell-process-anchor'
 
 export type PtyShutdownOperation = {
   promise: Promise<void>
@@ -52,6 +53,9 @@ export const ptyWorktreeId = new Map<string, string>()
 export const ptyInitialCwd = new Map<string, string>()
 // Why: reattach carries current settings, not the live process's launch context; keep the first creator's WSL/native identity.
 export const ptyWslDistroById = new Map<string, string | null>()
+/** Guest shell identity observed from the WSL wrapper's OSC startup marker. */
+export type WslPtyShellAnchor = WslShellProcessAnchor
+export const ptyWslShellAnchors = new Map<string, WslPtyShellAnchor>()
 // Why: node-pty callbacks dispose before env teardown, but onExit separately owns physical-exit proof during termination.
 export const ptyDisposables = new Map<string, { dispose: () => void }[]>()
 export const ptyExitDisposables = new Map<string, { dispose: () => void }>()
@@ -123,6 +127,7 @@ export function clearPtyState(id: string): void {
   ptyWorktreeId.delete(id)
   ptyInitialCwd.delete(id)
   ptyWslDistroById.delete(id)
+  ptyWslShellAnchors.delete(id)
   ptyLoadGeneration.delete(id)
   ptyTerminationMode.delete(id)
   ptyReportsChildExitStatus.delete(id)

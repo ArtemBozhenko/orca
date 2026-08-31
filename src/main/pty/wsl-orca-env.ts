@@ -58,6 +58,26 @@ export function addOrcaWslInteropEnv(env: Record<string, string>): void {
   // are always the local file set -- windows-shell-args.ts is shared by the
   // in-process provider and the daemon spawner, so both resolve the same tree.
   env.ORCA_SHELL_READY_ROOT = getShellReadyWrapperRoot()
+  // WSL's host-side process is always wsl.exe. Ask the guest wrapper to emit
+  // its shell identity marker so process evidence can anchor to the guest PID.
+  // The feature selection crosses through WSLENV, never the wsl.exe argv.
+  const existingFeatures = env.ORCA_SHELL_FEATURES?.split(',').filter(Boolean) ?? []
+  const overlayFeatures = [
+    'ORCA_OPENCODE_CONFIG_DIR',
+    'ORCA_MIMOCODE_HOME',
+    'ORCA_OMP_STATUS_EXTENSION',
+    'ORCA_CODEX_HOME',
+    'ORCA_AGENT_TEAMS_SHIM_DIR',
+    'ORCA_REMOTE_CLI_BIN_DIR'
+  ].some((key) => Boolean(env[key]))
+  env.ORCA_SHELL_FEATURES = [
+    ...new Set([
+      ...existingFeatures,
+      ...(overlayFeatures ? ['overlay'] : []),
+      'markers',
+      'identity'
+    ])
+  ].join(',')
   // Why: the endpoint is a Windows path (/p-translated so the guest reads it
   // via /mnt/c) until the WSL hook relay reports the guest home — then it is
   // already a guest-side POSIX path and must cross untranslated.
@@ -76,6 +96,7 @@ export function addOrcaWslInteropEnv(env: Record<string, string>): void {
     // Why /p: the guest reads the content-addressed wrapper tree through /mnt/c,
     // and it cannot derive the hash segment from ORCA_USER_DATA_PATH alone.
     'ORCA_SHELL_READY_ROOT/p',
+    'ORCA_SHELL_FEATURES/u',
     'ORCA_CLI_COMMAND/u',
     'ORCA_CODEX_LAUNCH_PREFLIGHT/p',
     'ORCA_PANE_KEY/u',
