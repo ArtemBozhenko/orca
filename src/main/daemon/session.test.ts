@@ -184,6 +184,18 @@ describe('Session', () => {
       })
     })
 
+    it('drains a partial WSL identity marker when the subprocess exits', () => {
+      createSession({ wslDistro: 'Ubuntu' })
+      const received: string[] = []
+      session.attachClient({ onData: (data) => received.push(data), onExit: () => {} })
+      const partial = '\x1b]777;orca-shell-start:v2:Ubuntu:01234567'
+
+      subprocess.simulateData(partial)
+      subprocess.simulateExit(0)
+
+      expect(received.join('')).toContain(partial)
+    })
+
     it('does not confirm shell ownership from historical replay bytes', () => {
       createSession({
         historySeedChunks: ['\x1b[?1049hOLD-TUI\x1b]133;D;137\x07old-shell-marker']

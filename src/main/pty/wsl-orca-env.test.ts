@@ -16,6 +16,16 @@ describe('addOrcaWslInteropEnv', () => {
     expect(env.WSLENV).toBe('ORCA_TERMINAL_HANDLE/u:ORCA_SHELL_READY_ROOT/p:ORCA_SHELL_FEATURES/u')
   })
 
+  it('drops unknown inherited shell features before adding canonical WSL features', () => {
+    const env: Record<string, string> = {
+      ORCA_SHELL_FEATURES: 'overlay,evil, markers,overlay,  identity '
+    }
+
+    addOrcaWslInteropEnv(env)
+
+    expect(env.ORCA_SHELL_FEATURES).toBe('overlay,markers,identity')
+  })
+
   // Why this is published at all: the wrapper tree is content-addressed, so the
   // in-guest login script cannot rebuild its path from ORCA_USER_DATA_PATH -- it
   // cannot derive the hash segment. Without this the guest finds no wrapper and

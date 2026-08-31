@@ -1,5 +1,6 @@
 import {
   createShellStartupIdentityScanState,
+  drainShellStartupIdentityHeldBytes,
   scanForShellStartupIdentity,
   type ShellStartupIdentityScanState
 } from '../shell-startup-identity-scanner'
@@ -15,6 +16,22 @@ export class SessionWslShellAnchorTracker {
 
   get anchor(): WslShellProcessAnchor | null {
     return this._anchor
+  }
+
+  drainHeldBytes(): string {
+    if (!this.scanState) {
+      return ''
+    }
+    const held = drainShellStartupIdentityHeldBytes(this.scanState)
+    this.scanState = null
+    return held
+  }
+
+  drainInto(accept: (data: string) => void): void {
+    const held = this.drainHeldBytes()
+    if (held.length > 0) {
+      accept(held)
+    }
   }
 
   scan(data: string): string {

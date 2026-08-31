@@ -291,6 +291,7 @@ export class Session {
     // Why: `wasTerminating` below must be read BEFORE the `_state = 'exited'` flip — it guards the
     // "dispose while kill() in flight" case and the invariant needs the pre-flip `_state`; do NOT move it down.
     this.shellReady.releaseDeviceAttributes()
+    this.wslShellAnchorTracker.drainInto((data) => this.shellReady.ingestSubprocessData(data))
     this.shellReady.releaseHeldBytes()
     this.startupIngress.drainAndClose()
     // Why after drainAndClose (and before clearClients below): a dispose
@@ -362,6 +363,7 @@ export class Session {
 
     this.shellReady.releaseDeviceAttributes()
     this.shellReady.disposePromptReadinessProbe()
+    this.wslShellAnchorTracker.drainInto((data) => this.shellReady.ingestSubprocessData(data))
     this.shellReady.releaseHeldBytes()
     this.startupIngress.drainAndClose()
     // Why after drainAndClose: drained ingress bytes re-enter the barrier and can

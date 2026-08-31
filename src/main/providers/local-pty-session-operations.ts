@@ -128,7 +128,9 @@ export async function listLocalPtyProcesses(): Promise<PtyProcessInfo[]> {
   const wslByDistro = new Map<string, string[]>()
   for (const [id] of entries) {
     const distro = ptyWslDistroById.get(id)
-    if (distro) {
+    // Without a shell anchor the inventory cannot resolve a foreground process;
+    // avoid paying for a guest scan whose verdict is necessarily unverifiable.
+    if (distro && ptyWslShellAnchors.has(id)) {
       const ids = wslByDistro.get(distro) ?? []
       ids.push(id)
       wslByDistro.set(distro, ids)
@@ -141,7 +143,12 @@ export async function listLocalPtyProcesses(): Promise<PtyProcessInfo[]> {
     })
   )
 
-  return entries.map(([id, proc]) => {
+  return entries.flatMap(([id, proc]) => {
+    // Inventory reads are asynchronous; a PTY may have exited while they ran.
+    // Do not publish a row for an incarnation that is no longer authoritative.
+    if (ptyProcesses.get(id) !== proc) {
+      return []
+    }
     const distro = ptyWslDistroById.get(id)
     let title = proc.process || ptyShellName.get(id) || 'shell'
     let foregroundProcessEvidence: ForegroundProcessEvidence | undefined
@@ -178,16 +185,18 @@ export async function listLocalPtyProcesses(): Promise<PtyProcessInfo[]> {
         }
       }
     }
-    return {
-      id,
-      ...(ptyIncarnations.get(id) ? { incarnationId: ptyIncarnations.get(id) } : {}),
-      cwd: ptyInitialCwd.get(id) ?? '',
-      title,
-      ...(ptyWorktreeId.get(id) ? { worktreeId: ptyWorktreeId.get(id) } : {}),
-      ...(ptyTerminalHandle.get(id) ? { terminalHandle: ptyTerminalHandle.get(id) } : {}),
-      ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {}),
-      ...(foregroundProcessEvidence ? { foregroundProcessEvidence } : {})
-    }
+    return [
+      {
+        id,
+        ...(ptyIncarnations.get(id) ? { incarnationId: ptyIncarnations.get(id) } : {}),
+        cwd: ptyInitialCwd.get(id) ?? '',
+        title,
+        ...(ptyWorktreeId.get(id) ? { worktreeId: ptyWorktreeId.get(id) } : {}),
+        ...(ptyTerminalHandle.get(id) ? { terminalHandle: ptyTerminalHandle.get(id) } : {}),
+        ...(ptyWslDistroById.has(id) ? { wslDistro: ptyWslDistroById.get(id) ?? null } : {}),
+        ...(foregroundProcessEvidence ? { foregroundProcessEvidence } : {})
+      }
+    ]
   })
 }
 

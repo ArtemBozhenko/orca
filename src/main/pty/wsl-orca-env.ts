@@ -9,6 +9,7 @@ import {
   SETUP_AGENT_SEQUENCE_STARTUP_SCRIPT_ENV
 } from '../../shared/setup-agent-sequencing'
 import { getShellReadyWrapperRoot } from '../providers/local-pty-shell-ready-wrapper-root'
+import { SHELL_STARTUP_FEATURES, type ShellStartupFeature } from '../shell-startup-features'
 
 const WSLENV_ENTRY_SEPARATOR = ':'
 
@@ -61,7 +62,13 @@ export function addOrcaWslInteropEnv(env: Record<string, string>): void {
   // WSL's host-side process is always wsl.exe. Ask the guest wrapper to emit
   // its shell identity marker so process evidence can anchor to the guest PID.
   // The feature selection crosses through WSLENV, never the wsl.exe argv.
-  const existingFeatures = env.ORCA_SHELL_FEATURES?.split(',').filter(Boolean) ?? []
+  // A WSL pane can inherit this channel from an Orca shell launched earlier;
+  // retain only canonical feature names before adding this launch's overlay.
+  const existingFeatures = (env.ORCA_SHELL_FEATURES?.split(',') ?? [])
+    .map((feature) => feature.trim())
+    .filter((feature): feature is ShellStartupFeature =>
+      (SHELL_STARTUP_FEATURES as readonly string[]).includes(feature)
+    )
   const overlayFeatures = [
     'ORCA_OPENCODE_CONFIG_DIR',
     'ORCA_MIMOCODE_HOME',

@@ -57,6 +57,7 @@ export abstract class DaemonPtySessionInventory extends DaemonPtyProcessInspecti
         const distros = new Set(
           result.sessions
             .filter((session) => session.isAlive && session.wslDistro)
+            .filter((session) => session.wslShellAnchor)
             .map((session) => session.wslDistro as string)
         )
         await Promise.all(

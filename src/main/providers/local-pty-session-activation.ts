@@ -36,6 +36,7 @@ import { destroyPtyProcess, createPtyPhysicalExit } from './local-pty-terminatio
 import { writeStartupCommandWhenShellReady } from './local-pty-shell-ready-startup-command'
 import {
   createShellStartupIdentityScanState,
+  drainShellStartupIdentityHeldBytes,
   scanForShellStartupIdentity,
   type ShellStartupIdentityScanState
 } from '../shell-startup-identity-scanner'
@@ -164,6 +165,15 @@ export function activateLocalPtySession(args: {
     // Why: neutralize proc.kill before destroy — node-pty SIGHUPs on socket 'close', which can race here and signal a reaped/recycled pid.
     if (process.platform !== 'win32') {
       ;(proc as unknown as { kill: (sig?: string) => void }).kill = () => {}
+    }
+    // If the PTY dies mid-marker, return the withheld OSC bytes to the normal
+    // ingress path so teardown cannot silently eat user-visible output.
+    if (wslIdentityScanState) {
+      const heldIdentityBytes = drainShellStartupIdentityHeldBytes(wslIdentityScanState)
+      wslIdentityScanState = null
+      if (heldIdentityBytes.length > 0) {
+        readiness.acceptData(heldIdentityBytes)
+      }
     }
     readiness.prepareForExit()
     clearPtyState(id)
