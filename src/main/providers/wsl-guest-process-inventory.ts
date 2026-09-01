@@ -53,12 +53,22 @@ export const WSL_GUEST_INVENTORY_SCRIPT = [
   '$_orca_ps',
   'EOF',
   '_orca_seen=0',
+  '_orca_skipped=0',
   'while IFS= read -r _orca_line; do',
   '  [ -n "$_orca_line" ] || { continue; }',
   '  IFS=" " read -r _orca_pid _orca_ppid _orca_sid _orca_pgid _orca_tpgid _orca_tty _orca_stat _orca_args <<EOF',
   '$_orca_line',
   'EOF',
-  '  { IFS= read -r _orca_procstat < "/proc/$_orca_pid/stat"; } 2>/dev/null || { printf "error start_time\\n"; exit 1; }',
+  '  if { IFS= read -r _orca_procstat < "/proc/$_orca_pid/stat"; } 2>/dev/null; then',
+  '    :',
+  '  elif [ ! -e "/proc/$_orca_pid/stat" ]; then',
+  '    printf "skip %s\\n" "$_orca_pid"',
+  '    _orca_skipped=$((_orca_skipped + 1))',
+  '    continue',
+  '  else',
+  '    printf "error start_time\\n"',
+  '    exit 1',
+  '  fi',
   '  _orca_after=${_orca_procstat##*) }',
   '  IFS=" " read -r _orca_dummy1 _orca_dummy2 _orca_dummy3 _orca_dummy4 _orca_dummy5 _orca_dummy6 _orca_dummy7 _orca_dummy8 _orca_dummy9 _orca_dummy10 _orca_dummy11 _orca_dummy12 _orca_dummy13 _orca_dummy14 _orca_dummy15 _orca_dummy16 _orca_dummy17 _orca_dummy18 _orca_dummy19 _orca_start _orca_rest <<EOF',
   '$_orca_after',
@@ -69,7 +79,7 @@ export const WSL_GUEST_INVENTORY_SCRIPT = [
   'done <<EOF',
   '$_orca_ps',
   'EOF',
-  'printf "count %s %s\\n" "$_orca_seen" "$_orca_expected"'
+  'printf "count %s %s %s\\n" "$_orca_seen" "$_orca_expected" "$_orca_skipped"'
 ].join('\n')
 
 type ReaderDeps = {

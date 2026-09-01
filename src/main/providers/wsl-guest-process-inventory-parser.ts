@@ -24,8 +24,10 @@ export function parseWslGuestProcessInventoryPayload(
   let bootId: string | null = null
   let expectedCount: number | null = null
   let seenCount: number | null = null
+  let skippedCount: number | null = null
   const rows: WslGuestProcessRow[] = []
   const pids = new Set<number>()
+  const skippedPids = new Set<number>()
   for (const rawLine of payload.split(/\r?\n/)) {
     // Remove only the transport CR; trailing spaces belong to the command
     // remainder and must not be normalized away.
@@ -41,13 +43,23 @@ export function parseWslGuestProcessInventoryPayload(
       bootId = boot[1]!
       continue
     }
-    const count = line.match(/^count (\d+) (\d+)$/)
+    const count = line.match(/^count (\d+) (\d+)(?: (\d+))?$/)
     if (count) {
       if (seenCount !== null) {
         throw new Error('duplicate_count')
       }
       seenCount = Number(count[1])
       expectedCount = Number(count[2])
+      skippedCount = count[3] === undefined ? 0 : Number(count[3])
+      continue
+    }
+    const skipped = line.match(/^skip (\d+)$/)
+    if (skipped) {
+      const pid = Number(skipped[1])
+      if (!Number.isSafeInteger(pid) || pid <= 0 || pids.has(pid) || skippedPids.has(pid)) {
+        throw new Error('invalid_row')
+      }
+      skippedPids.add(pid)
       continue
     }
     const row = line.match(/^row (\d+) (\d+) (\d+) (-?\d+) (-?\d+) (\S+) (\S+) (\d+)(?: (.*))?$/)
@@ -92,8 +104,10 @@ export function parseWslGuestProcessInventoryPayload(
   if (
     seenCount === null ||
     expectedCount === null ||
-    seenCount !== expectedCount ||
-    seenCount !== rows.length
+    skippedCount === null ||
+    seenCount !== rows.length ||
+    skippedCount !== skippedPids.size ||
+    seenCount + skippedCount !== expectedCount
   ) {
     throw new Error('row_count_mismatch')
   }

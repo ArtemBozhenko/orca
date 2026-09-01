@@ -1,4 +1,7 @@
 import { execFileSync } from 'node:child_process'
+import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { runProcessMock } = vi.hoisted(() => ({ runProcessMock: vi.fn() }))
@@ -35,6 +38,54 @@ describe('WSL guest process inventory', () => {
       'IFS= read -r _orca_procstat < "/proc/$_orca_pid/stat"'
     )
     expect(WSL_GUEST_INVENTORY_SCRIPT).not.toContain('cat "/proc/$_orca_pid/stat"')
+  })
+
+  it('skips a process whose proc stat disappears and keeps the remaining agent row', () => {
+    const fixtureRoot = mkdtempSync(join(tmpdir(), 'wsl-guest-inventory-'))
+    try {
+      mkdirSync(join(fixtureRoot, 'sys/kernel/random'), { recursive: true })
+      writeFileSync(join(fixtureRoot, 'sys/kernel/random/boot_id'), `${bootId}\n`)
+      mkdirSync(join(fixtureRoot, '100'))
+      mkdirSync(join(fixtureRoot, '101'))
+      // Linux /proc/<pid>/stat-shaped output: field 22 is the start-time tick.
+      writeFileSync(
+        join(fixtureRoot, '100/stat'),
+        `100 (bash) S ${Array.from({ length: 18 }, () => '0').join(' ')} 12345 0\n`
+      )
+      writeFileSync(
+        join(fixtureRoot, '101/stat'),
+        `101 (codex) S ${Array.from({ length: 18 }, () => '0').join(' ')} 54321 0\n`
+      )
+      const binRoot = join(fixtureRoot, 'bin')
+      mkdirSync(binRoot)
+      const fakePs = join(binRoot, 'ps')
+      writeFileSync(
+        fakePs,
+        '#!/bin/sh\nprintf "%s\\n" "999999 0 100 100 100 pts/0 S short-lived" "100 0 100 100 101 pts/0 Ss+ bash" "101 100 100 101 101 pts/0 Sl+ codex"\n'
+      )
+      chmodSync(fakePs, 0o755)
+      const script = WSL_GUEST_INVENTORY_SCRIPT.replaceAll(
+        '/proc',
+        fixtureRoot.replaceAll('\\', '/')
+      )
+      const output = execFileSync('sh', ['-c', script], {
+        encoding: 'utf8',
+        env: { ...process.env, PATH: `${binRoot}:${process.env.PATH ?? ''}` }
+      })
+      expect(output).toContain('skip 999999')
+      const inventory = parseWslGuestProcessInventoryPayload(output, 'Ubuntu')
+      expect(inventory.rows).toHaveLength(2)
+      const resolved = resolveWslGuestForegroundProcess(inventory, {
+        distro: 'Ubuntu',
+        bootId,
+        shellPid: 100,
+        shellStartTime: 12345,
+        tty: '/dev/pts/0'
+      })
+      expect(resolved).toMatchObject({ status: 'live', processName: 'codex' })
+    } finally {
+      rmSync(fixtureRoot, { recursive: true, force: true })
+    }
   })
 
   it('parses fixed fields and preserves whitespace in args', () => {
