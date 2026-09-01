@@ -11,21 +11,21 @@ import {
 import type { SubprocessHandle } from './session-subprocess-handle'
 import type { JobTerminationOutcome } from '../windows/windows-pty-job'
 import type { SessionOptions } from './session-options'
-import type { TuiAgent } from '../../shared/tui-agent'
 import { randomUUID } from 'node:crypto'
 import { PtyStartupIngress } from '../../shared/pty-startup-ingress'
 import { SessionCheckpointAccess } from './session-checkpoint-access'
 import { SessionWslShellAnchorTracker } from './session-wsl-shell-anchor-tracker'
+import { SessionStartupQueryAuthority } from './session-startup-query-authority'
 
 import type { SessionState, ShellReadyState, TakePendingOutputResult } from './types'
 import type { TerminalSnapshot } from './terminal-snapshot'
 import type { TerminalExitCause } from '../../shared/terminal-exit-cause'
 
-export class Session {
+export class Session extends SessionStartupQueryAuthority {
   readonly sessionId: string
   readonly incarnationId = randomUUID()
   readonly terminalHandle: string | null
-  readonly launchAgent: TuiAgent | null
+  readonly launchAgent: NonNullable<SessionOptions['launchAgent']> | null
   readonly wslDistro: string | null
   private _state: SessionState = 'running'
   private _exitCode: number | null = null
@@ -36,12 +36,13 @@ export class Session {
   private readonly producerPause: SessionProducerPause
   private readonly shellReady: SessionShellReadyBarrier
   private readonly termination: SessionTerminationController
-  private readonly startupIngress: PtyStartupIngress
+  protected readonly startupIngress: PtyStartupIngress
   private readonly recoveryBarrier: TerminalShellRecoveryBarrier
   private readonly checkpoint: SessionCheckpointAccess
   private readonly wslShellAnchorTracker: SessionWslShellAnchorTracker
 
   constructor(opts: SessionOptions) {
+    super()
     this.sessionId = opts.sessionId
     this.terminalHandle = opts.terminalHandle ?? null
     this.launchAgent = opts.launchAgent ?? null
@@ -389,9 +390,5 @@ export class Session {
 
     // Why: hand off to the owner's reaper (disposes emulator, drops session from host map); else dead sessions accumulate.
     this.onSessionExit?.(code)
-  }
-
-  closeStartupQueryAuthority(): number {
-    return this.startupIngress.closeQueryAuthority()
   }
 }
