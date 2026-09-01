@@ -30,6 +30,13 @@ describe('WSL guest process inventory', () => {
     expect(() => execFileSync('sh', ['-n'], { input: WSL_GUEST_INVENTORY_SCRIPT })).not.toThrow()
   })
 
+  it('reads proc start times without forking cat per process', () => {
+    expect(WSL_GUEST_INVENTORY_SCRIPT).toContain(
+      'IFS= read -r _orca_procstat < "/proc/$_orca_pid/stat"'
+    )
+    expect(WSL_GUEST_INVENTORY_SCRIPT).not.toContain('cat "/proc/$_orca_pid/stat"')
+  })
+
   it('parses fixed fields and preserves whitespace in args', () => {
     const inventory = parseWslGuestProcessInventoryPayload(
       payload('row 100 90 90 100 100 pts/0 Sl+ 12345 /usr/bin/node --name "a b" --x'),
