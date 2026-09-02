@@ -415,7 +415,7 @@ describe('PR workflow parallelism', () => {
     expect(dependencyAction.inputs['cache-electron-package'].default).toBe('false')
   })
 
-  it('reuses TypeScript incremental state across typecheck runs', () => {
+  it('scopes TypeScript incremental state to the checked commit', () => {
     const steps = workflow.jobs.typecheck.steps
     const cacheIndex = steps.findIndex((step) => step.name === 'Cache TypeScript incremental state')
     const checkIndex = steps.findIndex((step) => step.run === 'pnpm run typecheck')
@@ -423,15 +423,13 @@ describe('PR workflow parallelism', () => {
     expect(cacheIndex).toBeGreaterThanOrEqual(0)
     expect(cacheIndex).toBeLessThan(checkIndex)
     expect(steps[cacheIndex].with.path).toBe('config/*.tsbuildinfo')
-    // Why restore-keys matter here: the base SHA key is shared by every commit in a PR,
-    // but actions/cache keeps the first successful graph until the base or config changes.
-    expect(steps[cacheIndex].with['restore-keys']).toBeTruthy()
-    // The buildinfo is only reusable while the compiler options that produced it hold.
+    // Why commit scope matters: sharing graphs across commits can retain stale symbol tables
+    // even when source content hashes changed.
+    expect(steps[cacheIndex].with['restore-keys']).toBeUndefined()
     expect(steps[cacheIndex].with.key).toContain(
       "hashFiles('pnpm-lock.yaml', 'config/tsconfig*.json')"
     )
-    expect(steps[cacheIndex].with.key).toContain('github.event.pull_request.base.sha')
-    expect(steps[cacheIndex].with['restore-keys']).not.toContain('tsbuildinfo-${{ runner.os }}-\n')
+    expect(steps[cacheIndex].with.key).toContain('github.sha')
   })
 
   it('checks out full history without historical blobs', () => {
