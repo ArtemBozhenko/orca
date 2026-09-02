@@ -11,6 +11,11 @@ import {
   seedStore
 } from './store-test-helpers'
 import { createStoreCascadesMockApi } from './store-cascades-test-harness'
+import {
+  clearWorktreeSleepIntent,
+  hasWorktreeSleepIntent,
+  markWorktreeSleepIntent
+} from '@/lib/worktree-sleep-intent'
 
 const mockUnregisterPtyDataHandlers = vi.hoisted(() => vi.fn<() => unknown[]>(() => []))
 const mockRestorePtyDataHandlersAfterFailedShutdown = vi.hoisted(() => vi.fn())
@@ -40,6 +45,42 @@ describe('setActiveWorktree', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     mockApi.worktrees.updateMeta.mockResolvedValue({})
+    clearWorktreeSleepIntent('repo1::/path/wt1')
+  })
+
+  it('releases deliberate sleep intent at the shared activation boundary', () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/path/wt1'
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1', path: '/path/wt1' })]
+      },
+      refreshGitHubForWorktree: vi.fn(),
+      refreshGitHubForWorktreeIfStale: vi.fn()
+    })
+
+    markWorktreeSleepIntent(worktreeId)
+    expect(hasWorktreeSleepIntent(worktreeId)).toBe(true)
+
+    store.getState().setActiveWorktree(worktreeId)
+
+    expect(hasWorktreeSleepIntent(worktreeId)).toBe(false)
+  })
+
+  it('keeps deliberate sleep intent while clearing the active workspace', () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/path/wt1'
+    seedStore(store, {
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1', path: '/path/wt1' })]
+      }
+    })
+
+    markWorktreeSleepIntent(worktreeId)
+    store.getState().setActiveWorktree(null)
+
+    expect(hasWorktreeSleepIntent(worktreeId)).toBe(true)
+    clearWorktreeSleepIntent(worktreeId)
   })
 
   it('does not rewrite sortOrder when selecting a worktree', () => {

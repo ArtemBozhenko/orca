@@ -24,6 +24,7 @@ import {
 } from '../listing/detected-worktree-meta'
 import { persistPassiveWorktreeMetaForOwner } from '../listing/worktree-owner-settings'
 import { resolveActivatedWorktreeSurface } from './active-worktree-surface'
+import { clearWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
 import {
   pendingActivationTerminalPrepCancels,
   shouldDeferActivationTerminalPrep
@@ -40,6 +41,10 @@ export function createSetActiveWorktree(
         set(stateTransition.patch)
       }
       return false
+    }
+    // Any non-null activation is an explicit wake, regardless of which caller initiated it.
+    if (worktreeId) {
+      clearWorktreeSleepIntent(worktreeId)
     }
     const workspaceScope = worktreeId ? parseWorkspaceKey(worktreeId) : null
     if (worktreeId && shouldDeferActivationTerminalPrep()) {

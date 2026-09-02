@@ -8,6 +8,7 @@ import {
   folderWorkspaceMatchesHost
 } from '../listing/detected-worktree-meta'
 import { shouldDeferActivationTerminalPrep } from './activation-terminal-prep'
+import { clearWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
 
 export function createSetActiveFolderWorkspace(
   set: WorktreeSliceSet,
@@ -19,6 +20,8 @@ export function createSetActiveFolderWorkspace(
     if (!workspace) {
       return
     }
+    // Folder activation is also an explicit wake of its workspace scope.
+    clearWorktreeSleepIntent(workspaceKey)
     if (shouldDeferActivationTerminalPrep()) {
       markInputQuietSchedulerInput()
     }

@@ -93,6 +93,10 @@ describe('hydrateWorkspaceSession', () => {
         origin: 'worktree-sleep'
       })
     })
+    expect(store.getState().terminalLayoutsByTabId['tab-slept']).toMatchObject({
+      root: { type: 'leaf', leafId: RESTART_LEAF_ID },
+      activeLeafId: RESTART_LEAF_ID
+    })
     // Unread/bell state is renderer attention, not session liveness, and is not persisted here.
     expect(store.getState().unreadTerminalTabs).toEqual({})
   })
