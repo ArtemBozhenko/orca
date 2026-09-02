@@ -7,6 +7,7 @@ import { useAppStore } from '@/store'
 import type { SleepingAgentSessionRecord } from '../../../shared/agent-session-resume'
 import { parseLegacyNumericPaneKey, parsePaneKey } from '../../../shared/stable-pane-id'
 import { resumeSleepingAgentSessionsForWorktree } from './resume-sleeping-agent-session'
+import { clearWorktreeSleepIntent } from './worktree-sleep-intent'
 import {
   getProviderSessionClaimKey,
   isPassiveCompletedHibernationEvidence,
@@ -165,6 +166,9 @@ function getCanonicalPassiveWakeRecords(
  * spawn is awaited.
  */
 export function wakeSleepingAgentsForWorktreeInBackground(worktreeId: string): void {
+  // Opening from a paired client is an explicit wake even when no agent record
+  // exists (for example, a workspace containing only plain shells).
+  clearWorktreeSleepIntent(worktreeId)
   const worktreeRecords = Object.values(
     useAppStore.getState().sleepingAgentSessionsByPaneKey
   ).filter((record) => record.worktreeId === worktreeId)

@@ -7,6 +7,7 @@ import {
   createMockTransport,
   createPane,
   createManager,
+  LEAF_1,
   type ConnectCallbacks,
   type MockTransport
 } from './pty-connection-test-pane-fixtures'
@@ -481,5 +482,90 @@ describe('connectPanePty', () => {
     onPtySpawn?.('pty-resume')
 
     expect(onStartupBound).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fresh-spawn a hidden pane after an unrelated workspace activates a slept one', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const transport = createMockTransport()
+    transportFactoryQueue.push(transport)
+    const paneKey = `tab-slept:${LEAF_1}`
+    mockStoreState = {
+      ...mockStoreState,
+      activeWorktreeId: 'wt-active',
+      tabsByWorktree: {
+        'wt-1': [{ id: 'tab-slept', ptyId: null }],
+        'wt-active': []
+      },
+      ptyIdsByTabId: { 'tab-slept': [] },
+      terminalLayoutsByTabId: {
+        'tab-slept': {
+          root: { type: 'leaf', leafId: LEAF_1 },
+          activeLeafId: LEAF_1,
+          expandedLeafId: null,
+          ptyIdsByLeafId: {}
+        }
+      },
+      sleepingAgentSessionsByPaneKey: {
+        [paneKey]: {
+          paneKey,
+          tabId: 'tab-slept',
+          worktreeId: 'wt-1',
+          agent: 'codex',
+          providerSession: { key: 'session_id', id: 'synthetic-slept-session' },
+          prompt: 'synthetic prompt',
+          state: 'working',
+          origin: 'live',
+          capturedAt: 1000,
+          updatedAt: 1000,
+          terminalTitle: 'Codex'
+        }
+      }
+    }
+    const { clearWorktreeSleepIntent, markWorktreeSleepIntent } =
+      await import('@/lib/worktree-sleep-intent')
+    markWorktreeSleepIntent('wt-1')
+    try {
+      const deps = createDeps({
+        tabId: 'tab-slept',
+        worktreeId: 'wt-1',
+        restoredLeafId: LEAF_1,
+        restoredPtyIdByLeafId: { [LEAF_1]: null },
+        isVisibleRef: { current: false }
+      })
+
+      connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+      await flushAsyncTicks()
+
+      expect(transport.connect).not.toHaveBeenCalled()
+    } finally {
+      clearWorktreeSleepIntent('wt-1')
+    }
+  })
+
+  it('allows a queued startup to wake a deliberately slept pane', async () => {
+    const { connectPanePty } = await import('./pty-connection')
+    const { clearWorktreeSleepIntent, markWorktreeSleepIntent } =
+      await import('@/lib/worktree-sleep-intent')
+    const transport = createMockTransport()
+    transportFactoryQueue.push(transport)
+    mockStoreState = { ...mockStoreState, activeWorktreeId: 'wt-active' }
+    markWorktreeSleepIntent('wt-1')
+    try {
+      const deps = createDeps({
+        tabId: 'tab-slept',
+        worktreeId: 'wt-1',
+        restoredLeafId: LEAF_1,
+        restoredPtyIdByLeafId: { [LEAF_1]: null },
+        isVisibleRef: { current: false },
+        startup: { command: 'printf synthetic-wake', launchAgent: undefined }
+      })
+
+      connectPanePty(createPane(1) as never, createManager(1) as never, deps as never)
+      await flushAsyncTicks()
+
+      expect(transport.connect).toHaveBeenCalledTimes(1)
+    } finally {
+      clearWorktreeSleepIntent('wt-1')
+    }
   })
 })

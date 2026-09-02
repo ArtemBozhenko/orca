@@ -142,13 +142,17 @@ export async function runSleepWorktrees(worktreeIds: readonly string[]): Promise
     shutdownWorktreeTerminals
   } = useAppStore.getState()
   let activeSleepIntentWorktreeId: string | null = null
+  // Mark every target before teardown so hidden panes in background workspaces
+  // cannot respawn from an unrelated activation.
+  for (const worktreeId of worktreeIds) {
+    markWorktreeSleepIntent(worktreeId)
+  }
   if (activeWorktreeId && worktreeIds.includes(activeWorktreeId)) {
     const restoreSidebarPosition = preserveSidebarWorktreePosition(activeWorktreeId)
     // Why: clearing the active workspace can unmount TerminalPanes before
     // shutdownWorktreeTerminals writes PTY suppressions. Use a non-rendering
     // intent marker so those exits do not stamp activity, without inserting an
     // extra Zustand update that can disturb the sidebar's scroll restoration.
-    markWorktreeSleepIntent(activeWorktreeId)
     activeSleepIntentWorktreeId = activeWorktreeId
     setActiveWorktree(null)
     restoreSidebarPosition()
@@ -192,12 +196,14 @@ export async function runSleepWorktrees(worktreeIds: readonly string[]): Promise
       }
     }
   } finally {
-    if (activeSleepIntentWorktreeId) {
-      clearWorktreeSleepIntent(activeSleepIntentWorktreeId)
-      if (failedWorktreeIds.has(activeSleepIntentWorktreeId)) {
-        // Why: any failed sleep step must leave the workspace visible and retryable.
-        setActiveWorktree(activeSleepIntentWorktreeId)
-      }
+    // A failed sleep leaves the workspace awake, so release its marker. Successful
+    // sleeps retain it until explicit activation or background wake.
+    for (const worktreeId of failedWorktreeIds) {
+      clearWorktreeSleepIntent(worktreeId)
+    }
+    if (activeSleepIntentWorktreeId && failedWorktreeIds.has(activeSleepIntentWorktreeId)) {
+      // Any failed sleep step must leave the workspace visible and retryable.
+      setActiveWorktree(activeSleepIntentWorktreeId)
     }
   }
   if (errors.length > 0) {

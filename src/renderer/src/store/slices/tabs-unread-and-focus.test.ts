@@ -75,6 +75,8 @@ describe('TabsSlice', () => {
       store.getState().activateTab(t2.id)
 
       expect(store.getState().unreadTerminalTabs[t2TerminalId]).toBeUndefined()
+      store.getState().activateTab(t2.id)
+      expect(store.getState().unifiedTabsByWorktree[WT]).toHaveLength(2)
     })
   })
 

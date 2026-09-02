@@ -21,6 +21,8 @@ vi.mock('@/lib/agent-status', async (importOriginal) => {
 
 createStoreSessionMockApi()
 
+const RESTART_LEAF_ID = '11111111-1111-4111-8111-111111111111'
+
 function makeDetectedWorktreeResult(
   repoId: string,
   worktrees: Worktree[],
@@ -42,6 +44,57 @@ function makeDetectedWorktreeResult(
 describe('hydrateWorkspaceSession', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+  })
+
+  it('restores one slept tab and its resume record across a cold restart', () => {
+    const store = createTestStore()
+    const worktreeId = 'repo1::/wt-slept'
+    store.setState({
+      repos: [TEST_REPO],
+      worktreesByRepo: {
+        repo1: [makeWorktree({ id: worktreeId, repoId: 'repo1', path: '/wt-slept' })]
+      }
+    })
+    store.getState().hydrateWorkspaceSession({
+      ...getDefaultWorkspaceSession(),
+      activeRepoId: 'repo1',
+      activeWorktreeId: worktreeId,
+      activeTabId: 'tab-slept',
+      tabsByWorktree: {
+        [worktreeId]: [makeTab({ id: 'tab-slept', worktreeId, ptyId: null })]
+      },
+      terminalLayoutsByTabId: {
+        'tab-slept': {
+          ...makeLayout(),
+          root: { type: 'leaf', leafId: RESTART_LEAF_ID },
+          activeLeafId: RESTART_LEAF_ID
+        }
+      },
+      sleepingAgentSessionsByPaneKey: {
+        [`tab-slept:${RESTART_LEAF_ID}`]: {
+          paneKey: `tab-slept:${RESTART_LEAF_ID}`,
+          tabId: 'tab-slept',
+          worktreeId,
+          agent: 'codex',
+          providerSession: { key: 'session_id', id: 'synthetic-restart-session' },
+          prompt: 'synthetic restart prompt',
+          state: 'working',
+          capturedAt: 1,
+          updatedAt: 1,
+          origin: 'worktree-sleep'
+        }
+      }
+    })
+
+    expect(store.getState().tabsByWorktree[worktreeId]).toHaveLength(1)
+    expect(store.getState().sleepingAgentSessionsByPaneKey).toMatchObject({
+      [`tab-slept:${RESTART_LEAF_ID}`]: expect.objectContaining({
+        providerSession: { key: 'session_id', id: 'synthetic-restart-session' },
+        origin: 'worktree-sleep'
+      })
+    })
+    // Unread/bell state is renderer attention, not session liveness, and is not persisted here.
+    expect(store.getState().unreadTerminalTabs).toEqual({})
   })
 
   it('filters out tabs for invalid worktree IDs', () => {

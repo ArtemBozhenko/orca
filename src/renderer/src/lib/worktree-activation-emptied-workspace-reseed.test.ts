@@ -163,6 +163,23 @@ describe('activating a workspace whose last terminal was closed', () => {
   })
 })
 
+describe('repeated activation of a restored terminal workspace', () => {
+  it('does not append a tab when the bell is clicked more than once', () => {
+    const worktree = makeWorktree()
+    seedEmptyActivatableWorktree(worktree)
+    const restoredTab = {
+      ...useAppStore.getState().createTab(worktree.id),
+      ptyId: null
+    }
+    useAppStore.setState({ tabsByWorktree: { [worktree.id]: [restoredTab] } })
+
+    activateAndRevealWorktree(worktree.id, { notifyHostRuntime: false })
+    activateAndRevealWorktree(worktree.id, { notifyHostRuntime: false })
+
+    expect(useAppStore.getState().tabsByWorktree[worktree.id]).toHaveLength(1)
+  })
+})
+
 const FOLDER_ID = 'folder-1'
 const FOLDER_KEY = folderWorkspaceKey(FOLDER_ID)
 const SSH_HOST_ID = toSshExecutionHostId('conn-1')

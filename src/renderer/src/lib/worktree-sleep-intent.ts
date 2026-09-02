@@ -1,3 +1,5 @@
+// A slept workspace keeps panes mounted while its PTYs are released. This marker
+// distinguishes that deliberate cold state from an uninitialized terminal.
 const sleepingWorktreeIds = new Set<string>()
 
 export function markWorktreeSleepIntent(worktreeId: string): void {

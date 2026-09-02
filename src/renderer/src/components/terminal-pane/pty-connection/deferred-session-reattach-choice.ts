@@ -14,6 +14,8 @@ import {
   isSessionOwnedByWorktree
 } from './paired-parked-terminal-restore'
 import { startDeferredSessionReattach } from './deferred-session-reattach-connect'
+import { hasWorktreeSleepIntent } from '@/lib/worktree-sleep-intent'
+import { shouldStayColdForDeliberateSleep } from './deliberate-sleep-cold-start'
 
 import type { ConnectPanePtySession } from './connect-pane-pty-session'
 
@@ -216,6 +218,18 @@ export function runDeferredSessionReattachChoice(session: ConnectPanePtySession)
         .catch((err) => {
           session.reportError(err instanceof Error ? err.message : String(err))
         })
+    } else if (
+      shouldStayColdForDeliberateSleep({
+        hasQueuedStartup: session.paneStartup !== null,
+        isPaneVisible: session.deps.isVisibleRef.current === true,
+        hasSleepIntent: hasWorktreeSleepIntent(session.deps.worktreeId),
+        activeWorktreeId: useAppStore.getState().activeWorktreeId,
+        worktreeId: session.deps.worktreeId
+      })
+    ) {
+      // An unrelated activation can run this deferred connect after sleep teardown;
+      // without a live PTY, spawning here would silently wake the slept workspace.
+      recordPtyConnectDiagnostic(`pane=${session.pane.id} -> SKIP SPAWN (deliberate sleep)`)
     } else {
       recordPtyConnectDiagnostic(`pane=${session.pane.id} -> FRESH SPAWN`)
       if (sleptRemoteColdRestoreStartup || hasSleepingAgentSession) {

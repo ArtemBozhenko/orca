@@ -135,6 +135,19 @@ describe('createBackgroundSleepingAgentWakeDispatcher', () => {
 })
 
 describe('wakeSleepingAgentsForWorktreeInBackground', () => {
+  it('releases sleep intent before the no-records return', async () => {
+    const { clearWorktreeSleepIntent, hasWorktreeSleepIntent, markWorktreeSleepIntent } =
+      await import('./worktree-sleep-intent')
+    markWorktreeSleepIntent('wt-plain-shell')
+    try {
+      wakeSleepingAgentsForWorktreeInBackground('wt-plain-shell')
+
+      expect(hasWorktreeSleepIntent('wt-plain-shell')).toBe(false)
+    } finally {
+      clearWorktreeSleepIntent('wt-plain-shell')
+    }
+  })
+
   it('fires wake, targeted background-mount, then resume when a passive record exists', () => {
     sleepingRecords = { k1: { worktreeId: 'wt-1', paneKey: 'tab-a:leaf-1', tabId: 'tab-a' } }
     isPassiveSpy.mockReturnValue(true)
