@@ -1,5 +1,5 @@
 import type { ExecutionHostId } from './execution-host'
-import { normalizeRuntimePathForComparison, relativePathInsideRoot } from './cross-platform-path'
+import { createRelativePathInsideRootResolver } from './cross-platform-path'
 
 export type RuntimeWorkspaceFileRoot = {
   workspaceId: string
@@ -23,11 +23,12 @@ export function findRuntimeWorkspaceFileOwner(
     if (root.executionHostId !== executionHostId) {
       continue
     }
-    const relativePath = relativePathInsideRoot(root.rootPath, absolutePath)
+    const insideRoot = createRelativePathInsideRootResolver(root.rootPath)
+    const relativePath = insideRoot.resolve(absolutePath)
     if (relativePath === null) {
       continue
     }
-    const rootLength = normalizeRuntimePathForComparison(root.rootPath).length
+    const rootLength = insideRoot.comparisonRoot.length
     if (
       rootLength > bestRootLength ||
       (rootLength === bestRootLength &&

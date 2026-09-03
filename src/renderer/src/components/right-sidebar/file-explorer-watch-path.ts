@@ -1,11 +1,47 @@
 import { joinPath, dirname, normalizeRelativePath } from '@/lib/path'
 import {
-  normalizeRuntimePathForComparison,
-  relativePathInsideRoot
+  createRelativePathInsideRootResolver,
+  normalizeRuntimePathForComparison
 } from '../../../../shared/cross-platform-path'
 
 export function normalizeExplorerAbsolutePath(path: string): string {
   return path === '/' || /^[A-Za-z]:[\\/]$/.test(path) ? path : path.replace(/[\\/]+$/, '')
+}
+
+export type FileExplorerWatchPathResolver = {
+  canonicalize: (absolutePath: string) => string | null
+  externalFileChangeRelativePath: (
+    absolutePath: string,
+    isDirectory: boolean | undefined
+  ) => string | null
+}
+
+/** Folds the worktree root once per watcher batch rather than once per event in the storm. */
+export function createFileExplorerWatchPathResolver(
+  worktreePath: string
+): FileExplorerWatchPathResolver {
+  const insideRoot = createRelativePathInsideRootResolver(worktreePath)
+  const rootPath = normalizeExplorerAbsolutePath(worktreePath)
+  return {
+    canonicalize: (absolutePath) => {
+      const relativePath = insideRoot.resolve(absolutePath)
+      if (relativePath === null) {
+        return null
+      }
+      return relativePath === '' ? rootPath : joinPath(rootPath, relativePath)
+    },
+    externalFileChangeRelativePath: (absolutePath, isDirectory) => {
+      if (isDirectory === true) {
+        return null
+      }
+      const relativePath = insideRoot.resolve(absolutePath)
+      if (relativePath === null || relativePath === '') {
+        return null
+      }
+      // Why: EditorPanel reloads tabs only from a worktree-relative path, not the watcher's absolute one; normalize or contents go stale.
+      return normalizeRelativePath(relativePath)
+    }
+  }
 }
 
 export function getExternalFileChangeRelativePath(
@@ -13,30 +49,17 @@ export function getExternalFileChangeRelativePath(
   absolutePath: string,
   isDirectory: boolean | undefined
 ): string | null {
-  if (isDirectory === true) {
-    return null
-  }
-
-  const relativePath = relativePathInsideRoot(worktreePath, absolutePath)
-  if (relativePath === null || relativePath === '') {
-    return null
-  }
-
-  // Why: EditorPanel reloads tabs only from a worktree-relative path, not the watcher's absolute one; normalize or contents go stale.
-  return normalizeRelativePath(relativePath)
+  return createFileExplorerWatchPathResolver(worktreePath).externalFileChangeRelativePath(
+    absolutePath,
+    isDirectory
+  )
 }
 
 export function canonicalizeFileExplorerWatchPath(
   worktreePath: string,
   absolutePath: string
 ): string | null {
-  const relativePath = relativePathInsideRoot(worktreePath, absolutePath)
-  if (relativePath === null) {
-    return null
-  }
-
-  const rootPath = normalizeExplorerAbsolutePath(worktreePath)
-  return relativePath === '' ? rootPath : joinPath(rootPath, relativePath)
+  return createFileExplorerWatchPathResolver(worktreePath).canonicalize(absolutePath)
 }
 
 export function createCachedDirPathIndex(

@@ -1,4 +1,8 @@
-import { normalizeRuntimePathForComparison, relativePathInsideRoot } from '../cross-platform-path'
+import {
+  createNormalizedPathInsideOrEqualMatcher,
+  normalizeRuntimePathForComparison,
+  relativePathInsideRoot
+} from '../cross-platform-path'
 import { parseWslUncPath } from '../wsl-paths'
 import {
   isRuntimePathAbsoluteForRepo,
@@ -241,9 +245,10 @@ function isUnderFlatOrUntrustedOrcaRoot(
   worktreePath: string,
   knownOrcaLayouts: OrcaWorkspaceLayout[]
 ): boolean {
+  // Only containment is asked here, so fold the candidate once instead of once per layout.
+  const comparisonWorktreePath = normalizeRuntimePathForComparison(worktreePath)
   for (const layout of knownOrcaLayouts) {
-    const relative = relativePathInsideRoot(layout.path, worktreePath)
-    if (relative === null) {
+    if (!createNormalizedPathInsideOrEqualMatcher(layout.path)(comparisonWorktreePath)) {
       continue
     }
     if (!layout.nestWorkspaces) {
@@ -260,9 +265,9 @@ function canClassifyAsExternal(
   if (knownOrcaLayouts.length === 0) {
     return false
   }
+  const comparisonWorktreePath = normalizeRuntimePathForComparison(worktreePath)
   for (const layout of knownOrcaLayouts) {
-    const relative = relativePathInsideRoot(layout.path, worktreePath)
-    if (relative === null) {
+    if (!createNormalizedPathInsideOrEqualMatcher(layout.path)(comparisonWorktreePath)) {
       continue
     }
     return layout.nestWorkspaces
