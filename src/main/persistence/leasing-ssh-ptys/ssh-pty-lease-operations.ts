@@ -4,6 +4,7 @@ import type { SshRemotePtyLease } from '../../../shared/ssh-types'
 import { isTerminalLeafId } from '../../../shared/stable-pane-id'
 import type { WorkspaceSessionState } from '../../../shared/workspace-session-state-types'
 import { invalidateLocalWorktreeMetadataPruneInputs } from '../../local-worktree-metadata-prune-gate'
+import { pruneRetiredSshRemotePtyLeaseTombstones } from './ssh-pty-lease-tombstone-retention'
 
 export type SshPtyLeaseOperations = {
   state: PersistedState
@@ -231,7 +232,11 @@ function updateSshRemotePtyLeaseStates(
   const bindingsChanged = shouldClearBindings
     ? operations.clearBindingsForLeases(targetId, leasesToClear)
     : false
-  return changed || bindingsChanged
+  // Why after the scrub: it is the scrub that makes the tombstones unreachable.
+  const tombstonesPruned = shouldClearBindings
+    ? pruneRetiredSshRemotePtyLeaseTombstones(operations, targetId)
+    : false
+  return changed || bindingsChanged || tombstonesPruned
 }
 
 export function markSshRemotePtyLeases(
@@ -301,10 +306,11 @@ export function markSshRemotePtyLease(
   }
   const shouldClearBindings = leaseStateWithdrawsBinding(state)
   if (lease.state === state) {
-    if (
-      (shouldClearBindings && operations.clearBindingsForLeases(targetId, [lease])) ||
-      recycledChanged
-    ) {
+    const bindingsCleared =
+      shouldClearBindings && operations.clearBindingsForLeases(targetId, [lease])
+    const tombstonesPruned =
+      shouldClearBindings && pruneRetiredSshRemotePtyLeaseTombstones(operations, targetId)
+    if (bindingsCleared || tombstonesPruned || recycledChanged) {
       operations.flush()
     }
     return
@@ -319,6 +325,7 @@ export function markSshRemotePtyLease(
   }
   if (shouldClearBindings) {
     operations.clearBindingsForLeases(targetId, [lease])
+    pruneRetiredSshRemotePtyLeaseTombstones(operations, targetId)
   }
   operations.flush()
 }
