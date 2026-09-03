@@ -6,6 +6,7 @@ import type {
 import type { WorkspaceSessionState } from '../../shared/workspace-session-state-types'
 import { getRepoIdFromWorktreeId } from '../../shared/worktree/id'
 import { pruneTabGroupLayoutAfterRetirement } from './mobile-session-terminal-retirement'
+import { getTerminalLeafMembershipIndex } from './terminal-leaf-membership-index'
 
 function collectLeafIds(node: TerminalPaneLayoutNode | null, ids: Set<string>): void {
   if (!node) {
@@ -169,14 +170,7 @@ export function findTerminalTabIdForLeaf(
   session: WorkspaceSessionState | undefined,
   leafId: string
 ): string | undefined {
-  for (const [tabId, layout] of Object.entries(session?.terminalLayoutsByTabId ?? {})) {
-    const leafIds = new Set<string>()
-    collectLeafIds(layout.root, leafIds)
-    if (leafIds.has(leafId)) {
-      return tabId
-    }
-  }
-  return undefined
+  return getTerminalLeafMembershipIndex(session?.terminalLayoutsByTabId).get(leafId)
 }
 
 export function hasHostAuthoritativeTerminalMembership(
