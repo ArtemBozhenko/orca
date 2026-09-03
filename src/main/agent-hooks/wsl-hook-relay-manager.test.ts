@@ -15,7 +15,11 @@ import {
   installRemoteManagedAgentHooks,
   REMOTE_MANAGED_HOOK_INSTALLER_AGENTS
 } from './remote-managed-hook-installers'
-import { WslHookRelayManager } from './wsl-hook-relay-manager'
+import {
+  getWslRelayIdentityRpcCount,
+  resetWslRelayIdentityRpcCount,
+  WslHookRelayManager
+} from './wsl-hook-relay-manager'
 import { FAILURE_COOLDOWN_BASE_MS, type WslHookRelayManagerDeps } from './wsl-hook-relay-deps'
 import {
   AGENT_HOOK_INSTALL_PLUGINS_METHOD,
@@ -23,10 +27,6 @@ import {
   AGENT_HOOK_REQUEST_REPLAY_METHOD
 } from '../../shared/agent-hook-relay'
 import { WSL_RELAY_PROCESS_METHODS } from '../../shared/wsl-hook-relay-contract'
-import {
-  getWslRelayIdentityRpcCount,
-  resetWslRelayIdentityRpcCount
-} from './wsl-hook-relay-manager'
 
 type GuestHarness = {
   transport: MultiplexerTransport
