@@ -61,7 +61,7 @@ describe('OrcaRuntimeRpcServer', () => {
       authToken: 'second-instance-token',
       startedAt: 1
     })
-    server.checkRuntimeMetadataOwnership()
+    await server.checkRuntimeMetadataOwnership()
 
     expect(readRuntimeMetadata(userDataPath)).toEqual(published)
 
@@ -86,7 +86,7 @@ describe('OrcaRuntimeRpcServer', () => {
       authToken: 'sibling-token',
       startedAt: 1
     })
-    server.checkRuntimeMetadataOwnership()
+    await server.checkRuntimeMetadataOwnership()
 
     expect(readRuntimeMetadata(userDataPath)).toMatchObject({ runtimeId: 'rt_live_sibling' })
 
@@ -112,7 +112,7 @@ describe('OrcaRuntimeRpcServer', () => {
       authToken: 'second-instance-token',
       startedAt: 1
     })
-    server.checkRuntimeMetadataOwnership()
+    await server.checkRuntimeMetadataOwnership()
 
     expect(watchStop).toHaveBeenCalledTimes(1)
     expect(server['metadataOwnershipWatch']).toBeNull()
