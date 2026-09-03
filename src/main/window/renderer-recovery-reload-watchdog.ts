@@ -1,6 +1,7 @@
 import { is } from '@electron-toolkit/utils'
 import type { BrowserWindow } from 'electron'
 import type { CreateMainWindowOptions } from './main-window-contracts'
+import { mainWindowLoadErrorCode } from './main-window-load-error-code'
 
 // Why 45s: in the field a recovery reload that lands does so in 0.3-2s (slowest observed 30.4s), while a stalled
 // one never lands at all — silent for up to 4h until the user force-quits. 45s clears the observed tail so a
@@ -16,6 +17,8 @@ export type RendererRecoveryReloadWatchdog = {
   issue: (details: Electron.RenderProcessGoneDetails, recentRecoveryCount: number) => void
   /** Settles the in-flight recovery reload as landed; safe to call for any load. */
   settleLoaded: () => void
+  /** Restarts the stall budget after a suspend froze the timer mid-load. */
+  notifySystemResume: () => void
   clear: () => void
 }
 
@@ -65,24 +68,35 @@ export function createRendererRecoveryReloadWatchdog(args: {
     is.dev && process.env.ELECTRON_RENDERER_URL
       ? RENDERER_RECOVERY_DEV_LOAD_TIMEOUT_MS
       : RENDERER_RECOVERY_LOAD_TIMEOUT_MS
-  const documentUrl = (): string => {
+  // Why scheme only: the full URL is the install path, and the crash-report redactor provably leaves a
+  // `file:///Users/...` or `file:///home/...` URL intact. Blank-vs-document is the whole triage signal anyway.
+  const documentScheme = (): string => {
     if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed?.() === true) {
-      return ''
+      return 'none'
     }
-    return mainWindow.webContents.getURL()
+    return (
+      /^([A-Za-z][A-Za-z0-9+.-]*):/.exec(mainWindow.webContents.getURL())?.[1]?.toLowerCase() ??
+      'none'
+    )
   }
-
-  const start = (reload: RecoveryReload): void => {
-    inFlight = reload
+  const armTimer = (reload: RecoveryReload): void => {
     clearTimer()
-    // Why: mark this in-place reload so the did-finish-load orphan sweep spares live PTYs until session restore (#5787).
-    opts?.onBeforeRecoveryReload?.(mainWindow.webContents.id)
-    reloadMainWindow((error) => fail(reload, error.message))
     timer = setTimeout(() => fail(reload), timeoutMs())
     timer.unref?.()
   }
 
-  const fail = (reload: RecoveryReload, error?: string): void => {
+  const start = (reload: RecoveryReload): void => {
+    inFlight = reload
+    // Why: mark this in-place reload so the did-finish-load orphan sweep spares live PTYs until session restore (#5787).
+    opts?.onBeforeRecoveryReload?.(mainWindow.webContents.id)
+    reloadMainWindow((error) => fail(reload, mainWindowLoadErrorCode(error)))
+    armTimer(reload)
+  }
+
+  const retryFrom = (reload: RecoveryReload): void =>
+    start({ ...reload, attempt: 1, startedAt: Date.now() })
+
+  const fail = (reload: RecoveryReload, errorCode?: string): void => {
     // Why: a superseded attempt still rejects (ERR_ABORTED); only the live one owns the outcome.
     if (inFlight !== reload) {
       return
@@ -93,11 +107,12 @@ export function createRendererRecoveryReloadWatchdog(args: {
       return
     }
     opts?.onRecoveryReloadOutcome?.({
-      status: error === undefined ? 'timeout' : 'failed',
+      status: errorCode === undefined ? 'timeout' : 'failed',
       attempt: reload.attempt,
-      elapsedMs: Date.now() - reload.startedAt,
-      url: documentUrl(),
-      ...(error === undefined ? {} : { error })
+      // Why clamp: a backward wall-clock jump must not publish a negative duration into a crash bundle.
+      elapsedMs: Math.max(0, Date.now() - reload.startedAt),
+      documentScheme: documentScheme(),
+      ...(errorCode === undefined ? {} : { errorCode })
     })
     if (isRecoveryPending()) {
       return
@@ -110,7 +125,10 @@ export function createRendererRecoveryReloadWatchdog(args: {
       details: reload.details,
       webContentsId: rendererWebContentsId,
       recentRecoveryCount: reload.recentRecoveryCount,
-      cause: 'reload-stalled'
+      cause: 'reload-stalled',
+      // Why: the prompt's default button is Reload, and an unwatched retry drops the user back into the same
+      // silent hang with no further prompt — the retry has to be watched or the remedy is one-shot.
+      retry: () => retryFrom(reload)
     })
   }
 
@@ -127,8 +145,17 @@ export function createRendererRecoveryReloadWatchdog(args: {
       opts?.onRecoveryReloadOutcome?.({
         status: 'loaded',
         attempt: reload.attempt,
-        elapsedMs: Date.now() - reload.startedAt
+        elapsedMs: Math.max(0, Date.now() - reload.startedAt)
       })
+    },
+    // Why: sleep freezes the timer, so it fires on wake against a load that never got its budget — and would
+    // abort a healthy load, or across both attempts raise the dialog on a healthy machine. Restart the budget.
+    notifySystemResume: () => {
+      if (!inFlight) {
+        return
+      }
+      inFlight.startedAt = Date.now()
+      armTimer(inFlight)
     },
     clear: () => {
       inFlight = null

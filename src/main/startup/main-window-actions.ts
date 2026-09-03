@@ -146,7 +146,8 @@ export function sendOpenCrashReport(targetWindow?: BrowserWindow | null): void {
 // Why: on renderer crash-loop the breaker stops auto-reloading and the window goes blank, so a main-process dialog is the only retry/quit surface.
 export async function showRendererRecoveryPrompt(
   recentRecoveryCount: number,
-  failure?: RendererRecoveryPromptFailure
+  failure?: RendererRecoveryPromptFailure,
+  retry?: () => void
 ): Promise<void> {
   await presentRendererRecoveryPrompt({
     recentRecoveryCount,
@@ -165,6 +166,12 @@ export async function showRendererRecoveryPrompt(
       }
       recordDurableCrashBreadcrumb('renderer_recovery_manual_retry')
       // Why: leave the breaker open so a re-crash re-raises this prompt instead of resuming the auto-reload loop.
+      // Why watched: Reload is the dialog's default button, and an unwatched retry that stalls returns the user to
+      // the same silent hang with no further prompt — the watchdog re-raises this dialog instead.
+      if (retry) {
+        retry()
+        return
+      }
       loadMainWindow(state.mainWindow)
     },
     quit: () => {

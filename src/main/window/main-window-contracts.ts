@@ -20,6 +20,8 @@ export type CreateMainWindowOptions = {
     webContentsId: number
     recentRecoveryCount: number
     cause?: 'crash-loop' | 'reload-stalled'
+    /** Watched manual retry for the recovery prompt; an unwatched one cannot re-raise the prompt when it stalls too. */
+    retry?: () => void
   }) => void
   /** Defer renderer load until IPC handlers are registered, or eager renderer calls race into missing channels. */
   deferLoad?: boolean
@@ -35,7 +37,9 @@ export type CreateMainWindowOptions = {
     status: 'loaded' | 'timeout' | 'failed'
     attempt: number
     elapsedMs: number
-    url?: string
-    error?: string
+    /** Scheme only ('file' | 'http' | 'none'): the full URL is an install path the crash-report redactor misses. */
+    documentScheme?: string
+    /** `ERR_*` code only, for the same reason — Electron's load-error message embeds the URL. */
+    errorCode?: string
   }) => void
 }

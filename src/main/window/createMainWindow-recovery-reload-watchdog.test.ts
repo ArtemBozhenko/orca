@@ -1,4 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type * as DurableCrashBreadcrumbModule from '../crash-reporting/durable-crash-breadcrumb'
+
+const { recordDurableCrashBreadcrumbMock } = vi.hoisted(() => ({
+  recordDurableCrashBreadcrumbMock: vi.fn()
+}))
+vi.mock('../crash-reporting/durable-crash-breadcrumb', async (importOriginal) => ({
+  ...(await importOriginal<typeof DurableCrashBreadcrumbModule>()),
+  recordDurableCrashBreadcrumb: recordDurableCrashBreadcrumbMock
+}))
 
 vi.mock('electron', async () =>
   (await import('./createMainWindow-test-harness')).electronModuleMock()
@@ -22,13 +31,21 @@ vi.mock('../browser/browser-client-page-renderer-runtime', async () => {
 })
 
 import { createMainWindow } from './createMainWindow'
-import { browserWindowMock, isMock, resetMainWindowMocks } from './createMainWindow-test-harness'
+import {
+  browserWindowMock,
+  isMock,
+  powerMonitorOnMock,
+  resetMainWindowMocks
+} from './createMainWindow-test-harness'
 import {
   RENDERER_RECOVERY_DEV_LOAD_TIMEOUT_MS,
   RENDERER_RECOVERY_LOAD_TIMEOUT_MS
 } from './renderer-recovery-reload-watchdog'
 
 const DOCUMENT_URL = 'file:///opt/orca/renderer/index.html'
+// A real macOS install URL: the crash-report redactor's PATH_PATTERNS provably leave this one intact.
+const INSTALL_PATH_LOAD_ERROR =
+  "ERR_FILE_NOT_FOUND (-6) loading 'file:///Users/jane.doe/Applications/Orca.app/Contents/Resources/app.asar/out/renderer/index.html'"
 const CRASH = { reason: 'crashed', exitCode: 5 } as Electron.RenderProcessGoneDetails
 
 /**
@@ -38,6 +55,7 @@ const CRASH = { reason: 'crashed', exitCode: 5 } as Electron.RenderProcessGoneDe
 describe('renderer recovery reload watchdog', () => {
   beforeEach(() => {
     resetMainWindowMocks()
+    recordDurableCrashBreadcrumbMock.mockClear()
     vi.useFakeTimers()
   })
 
@@ -105,7 +123,7 @@ describe('renderer recovery reload watchdog', () => {
       status: 'timeout',
       attempt: 1,
       elapsedMs: RENDERER_RECOVERY_LOAD_TIMEOUT_MS,
-      url: DOCUMENT_URL
+      documentScheme: 'file'
     })
     expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(3)
     expect(onRendererRecoveryExhausted).not.toHaveBeenCalled()
@@ -120,7 +138,8 @@ describe('renderer recovery reload watchdog', () => {
       details: CRASH,
       webContentsId: 143,
       recentRecoveryCount: 1,
-      cause: 'reload-stalled'
+      cause: 'reload-stalled',
+      retry: expect.any(Function)
     })
 
     consoleError.mockRestore()
@@ -163,7 +182,7 @@ describe('renderer recovery reload watchdog', () => {
       expect.objectContaining({
         status: 'failed',
         attempt: 1,
-        error: expect.stringContaining('ERR_FILE_NOT_FOUND')
+        errorCode: 'ERR_FILE_NOT_FOUND'
       })
     )
     expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(3)
@@ -227,6 +246,128 @@ describe('renderer recovery reload watchdog', () => {
     expect(onRecoveryReloadOutcome).not.toHaveBeenCalled()
     expect(onRendererRecoveryExhausted).not.toHaveBeenCalled()
     expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(2)
+
+    consoleError.mockRestore()
+  })
+  it('keeps the install path out of the outcome breadcrumb', async () => {
+    const onRecoveryReloadOutcome = vi.fn()
+    const { consoleError, crashRenderer, settleLoad } = createHarness()
+
+    createMainWindow(null, { onRecoveryReloadOutcome })
+    crashRenderer()
+    settleLoad[1]?.reject(new Error(INSTALL_PATH_LOAD_ERROR))
+    await vi.advanceTimersByTimeAsync(0)
+
+    const outcome = onRecoveryReloadOutcome.mock.calls[0]?.[0]
+    expect(outcome).toEqual({
+      status: 'failed',
+      attempt: 1,
+      elapsedMs: 0,
+      documentScheme: 'file',
+      errorCode: 'ERR_FILE_NOT_FOUND'
+    })
+    // sanitizeCrashReportString cannot redact a file:///Users/... URL, so nothing path-shaped may reach the crumb.
+    expect(JSON.stringify(outcome)).not.toContain('/')
+
+    consoleError.mockRestore()
+  })
+
+  it('records a durable breadcrumb for a rejected load, since console output never reaches the bundle', async () => {
+    const { consoleError, settleLoad } = createHarness()
+
+    createMainWindow(null, {})
+    settleLoad[0]?.reject(new Error(INSTALL_PATH_LOAD_ERROR))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // Catching the rejection retired the main_unhandled_rejection crumb this used to produce.
+    expect(recordDurableCrashBreadcrumbMock).toHaveBeenCalledWith('main_window_load_failed', {
+      errorCode: 'ERR_FILE_NOT_FOUND'
+    })
+
+    consoleError.mockRestore()
+  })
+
+  it('escalates to the prompt when both attempts are rejected outright', async () => {
+    const onRecoveryReloadOutcome = vi.fn()
+    const onRendererRecoveryExhausted = vi.fn()
+    const { consoleError, crashRenderer, settleLoad } = createHarness()
+
+    createMainWindow(null, { onRecoveryReloadOutcome, onRendererRecoveryExhausted })
+    crashRenderer()
+    settleLoad[1]?.reject(new Error('ERR_CONNECTION_REFUSED (-102)'))
+    await vi.advanceTimersByTimeAsync(0)
+    settleLoad[2]?.reject(new Error('ERR_CONNECTION_REFUSED (-102)'))
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onRecoveryReloadOutcome).toHaveBeenLastCalledWith(
+      expect.objectContaining({ status: 'failed', attempt: 2, errorCode: 'ERR_CONNECTION_REFUSED' })
+    )
+    expect(onRendererRecoveryExhausted).toHaveBeenCalledWith(
+      expect.objectContaining({ cause: 'reload-stalled', recentRecoveryCount: 1 })
+    )
+
+    consoleError.mockRestore()
+  })
+
+  it('hands the prompt a watched retry so a stalled manual reload re-raises it', () => {
+    const onRendererRecoveryExhausted = vi.fn()
+    const { browserWindowInstance, consoleError, crashRenderer } = createHarness()
+
+    createMainWindow(null, { onRendererRecoveryExhausted })
+    crashRenderer()
+    vi.advanceTimersByTime(RENDERER_RECOVERY_LOAD_TIMEOUT_MS * 2)
+    expect(onRendererRecoveryExhausted).toHaveBeenCalledTimes(1)
+    expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(3)
+
+    // Reload is the dialog's default button; unwatched it returned the user to the same unbounded silent hang.
+    onRendererRecoveryExhausted.mock.calls[0]?.[0].retry()
+    expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(4)
+
+    vi.advanceTimersByTime(RENDERER_RECOVERY_LOAD_TIMEOUT_MS * 2)
+    expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(5)
+    expect(onRendererRecoveryExhausted).toHaveBeenCalledTimes(2)
+
+    consoleError.mockRestore()
+  })
+
+  it('names the crash-loop cause and gives that prompt a watched retry too', () => {
+    const onRendererRecoveryExhausted = vi.fn()
+    const { consoleError, crashRenderer } = createHarness()
+
+    createMainWindow(null, { onRendererRecoveryExhausted })
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      crashRenderer()
+    }
+
+    expect(onRendererRecoveryExhausted).toHaveBeenCalledWith(
+      expect.objectContaining({ cause: 'crash-loop' })
+    )
+    expect(typeof onRendererRecoveryExhausted.mock.calls[0]?.[0].retry).toBe('function')
+
+    consoleError.mockRestore()
+  })
+
+  it('restarts the stall budget when the machine resumes mid-load', () => {
+    const onRecoveryReloadOutcome = vi.fn()
+    const { browserWindowInstance, consoleError, crashRenderer } = createHarness()
+
+    createMainWindow(null, { onRecoveryReloadOutcome })
+    crashRenderer()
+    // Sleep freezes the timer; on wake it would otherwise fire against a load that never got its budget.
+    vi.advanceTimersByTime(RENDERER_RECOVERY_LOAD_TIMEOUT_MS - 1)
+    const resume = powerMonitorOnMock.mock.calls.find(([event]) => event === 'resume')?.[1] as (
+      ...args: unknown[]
+    ) => void
+    resume()
+
+    vi.advanceTimersByTime(RENDERER_RECOVERY_LOAD_TIMEOUT_MS - 1)
+    expect(onRecoveryReloadOutcome).not.toHaveBeenCalled()
+    expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(2)
+
+    vi.advanceTimersByTime(1)
+    expect(onRecoveryReloadOutcome).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'timeout', attempt: 1 })
+    )
 
     consoleError.mockRestore()
   })

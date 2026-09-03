@@ -31,6 +31,8 @@ export type MainWindowFocusLifecycle = {
   isRendererProcessGone: () => boolean
   isShortcutRecorderFocused: () => boolean
   isTerminalInputFocused: () => boolean
+  /** Relays powerMonitor 'resume' so a suspend-frozen recovery-reload timer does not fire against an unbudgeted load. */
+  notifySystemResume: () => void
 }
 
 export function installMainWindowFocusLifecycle(args: {
@@ -201,7 +203,11 @@ export function installMainWindowFocusLifecycle(args: {
         opts?.onRendererRecoveryExhausted?.({
           details,
           webContentsId: rendererWebContentsId,
-          recentRecoveryCount: recovery.recentRecoveryCount
+          recentRecoveryCount: recovery.recentRecoveryCount,
+          cause: 'crash-loop',
+          // Why watched: the prompt's manual retry is a recovery reload too, and an unwatched one that stalls
+          // leaves the user with a blank window and no further prompt.
+          retry: () => recoveryReloadWatchdog.issue(details, recovery.recentRecoveryCount)
         })
         return
       }
@@ -261,6 +267,7 @@ export function installMainWindowFocusLifecycle(args: {
     isMarkdownEditorFocused: () => markdownEditorFocused,
     isRendererProcessGone: () => rendererProcessGone,
     isShortcutRecorderFocused: () => shortcutRecorderFocused,
-    isTerminalInputFocused: () => terminalInputFocused
+    isTerminalInputFocused: () => terminalInputFocused,
+    notifySystemResume: recoveryReloadWatchdog.notifySystemResume
   }
 }

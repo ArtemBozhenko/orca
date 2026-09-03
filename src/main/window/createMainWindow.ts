@@ -15,6 +15,7 @@ import {
   WINDOW_QUIT_RENDERER_ACK_TIMEOUT_MS
 } from './main-window-close-lifecycle'
 import type { CreateMainWindowOptions } from './main-window-contracts'
+import { mainWindowLoadErrorCode } from './main-window-load-error-code'
 import { installMainWindowFocusLifecycle } from './main-window-focus-lifecycle'
 import { installMainWindowShortcutRouting } from './main-window-shortcut-routing'
 import { installMainWindowStateLifecycle } from './main-window-state-lifecycle'
@@ -42,6 +43,11 @@ export function loadMainWindow(mainWindow: BrowserWindow, onError?: (error: Erro
   // so a recovery reload that was rejected outright left a blank window and no signal anywhere.
   load.catch((cause: unknown) => {
     const error = cause instanceof Error ? cause : new Error(String(cause))
+    // Why durable: catching the rejection retires the main_unhandled_rejection crumb this used to produce, and
+    // console output never reaches the diagnostic bundle — a packaged app discards stdout.
+    recordDurableCrashBreadcrumb('main_window_load_failed', {
+      errorCode: mainWindowLoadErrorCode(error)
+    })
     console.error('[window] Main window load failed', error)
     onError?.(error)
   })
@@ -164,6 +170,9 @@ export function createMainWindow(
     }
     forceRepaint(mainWindow)
     mainWindow.webContents.send('system:resumed')
+    // Why: a suspend freezes the recovery-reload stall timer, which then fires on wake against a load that never
+    // got its budget; reuse this existing resume signal rather than adding a second powerMonitor listener.
+    focus.notifySystemResume()
   }
   powerMonitor.on('resume', onSystemResume)
 

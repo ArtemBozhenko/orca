@@ -104,7 +104,7 @@ export function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}
         reason: details.reason,
         expectedTeardown: getExpectedTeardownScope(webContentsId, false)
       }),
-    onRendererRecoveryExhausted: ({ details, recentRecoveryCount, cause }) => {
+    onRendererRecoveryExhausted: ({ details, recentRecoveryCount, cause, retry }) => {
       // Why two names: a stalled reload never opened the breaker, and a bundle that says it did misreads the failure.
       recordDurableCrashBreadcrumb(
         cause === 'reload-stalled'
@@ -116,7 +116,7 @@ export function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}
           recentRecoveryCount
         }
       )
-      void showRendererRecoveryPrompt(recentRecoveryCount, cause)
+      void showRendererRecoveryPrompt(recentRecoveryCount, cause, retry)
     },
     deferLoad: true,
     ...(options.revealOnDidFinishLoad === true ? { revealOnDidFinishLoad: true } : {}),
@@ -134,12 +134,12 @@ export function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}
     },
     // Why: renderer_recovery_reload records intent before the load is issued, so a bundle could not distinguish a
     // reload that landed from one that never produced a document. This is the paired outcome.
-    onRecoveryReloadOutcome: ({ status, attempt, elapsedMs, url, error }) => {
+    onRecoveryReloadOutcome: ({ status, attempt, elapsedMs, documentScheme, errorCode }) => {
       recordDurableCrashBreadcrumb(`renderer_recovery_reload_${status}`, {
         attempt,
         elapsedMs,
-        ...(url ? { url } : {}),
-        ...(error ? { error } : {})
+        ...(documentScheme ? { documentScheme } : {}),
+        ...(errorCode ? { errorCode } : {})
       })
     }
   })
