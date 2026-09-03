@@ -1,4 +1,8 @@
 import type { KeybindingOverrides } from '../../shared/keybindings'
+import type {
+  RecoveryReloadMilestone,
+  RecoveryReloadTrigger
+} from './renderer-recovery-reload-watchdog'
 
 export type CreateMainWindowOptions = {
   /** Returns true when a manual app.quit() (Cmd+Q) is in progress, so the renderer skips the running-process confirm dialog. */
@@ -30,15 +34,21 @@ export type CreateMainWindowOptions = {
   title?: string
   getKeybindings?: () => KeybindingOverrides | undefined
   onBeforeReload?: (options: { ignoreCache: boolean; webContentsId: number }) => void
-  /** Marks the in-place recovery reload so did-finish-load's PTY orphan sweep spares live sessions until restore re-attaches (#5787). */
-  onBeforeRecoveryReload?: (webContentsId: number) => void
+  /**
+   * Marks the in-place recovery reload so did-finish-load's PTY orphan sweep spares live sessions until restore
+   * re-attaches (#5787). The prompt's manual Reload is one too, so `trigger` keeps the automatic-recovery
+   * breadcrumb counting only automatic recoveries.
+   */
+  onBeforeRecoveryReload?: (webContentsId: number, trigger: RecoveryReloadTrigger) => void
   /** Pairs an outcome with the recovery-reload intent crumb: bundles could not tell a landed reload from a stalled one. */
   onRecoveryReloadOutcome?: (outcome: {
     status: 'loaded' | 'timeout' | 'failed'
     attempt: number
     elapsedMs: number
-    /** Scheme only ('file' | 'http' | 'none'): the full URL is an install path the crash-report redactor misses. */
-    documentScheme?: string
+    /** How far the load got: 'none' is the blank-window field failure, anything else a document that then hung. */
+    progress?: RecoveryReloadMilestone
+    /** True when the load landed after the recovery prompt was already raised — the recovery worked. */
+    afterPrompt?: boolean
     /** `ERR_*` code only, for the same reason — Electron's load-error message embeds the URL. */
     errorCode?: string
   }) => void

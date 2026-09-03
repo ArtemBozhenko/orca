@@ -43,11 +43,14 @@ export function loadMainWindow(mainWindow: BrowserWindow, onError?: (error: Erro
   // so a recovery reload that was rejected outright left a blank window and no signal anywhere.
   load.catch((cause: unknown) => {
     const error = cause instanceof Error ? cause : new Error(String(cause))
+    const errorCode = mainWindowLoadErrorCode(error)
     // Why durable: catching the rejection retires the main_unhandled_rejection crumb this used to produce, and
-    // console output never reaches the diagnostic bundle — a packaged app discards stdout.
-    recordDurableCrashBreadcrumb('main_window_load_failed', {
-      errorCode: mainWindowLoadErrorCode(error)
-    })
+    // console output never reaches the diagnostic bundle — a packaged app discards stdout. Why not on teardown:
+    // a quit or close aborts the pending load (ERR_ABORTED, or a destroyed-object rejection that maps to
+    // 'unknown'), and a healthy shutdown must not write a load failure into the stream triage reads.
+    if (!mainWindow.isDestroyed() && errorCode !== 'ERR_ABORTED') {
+      recordDurableCrashBreadcrumb('main_window_load_failed', { errorCode })
+    }
     console.error('[window] Main window load failed', error)
     onError?.(error)
   })
@@ -174,7 +177,6 @@ export function createMainWindow(
     // got its budget; reuse this existing resume signal rather than adding a second powerMonitor listener.
     focus.notifySystemResume()
   }
-  powerMonitor.on('resume', onSystemResume)
 
   const state = installMainWindowStateLifecycle({
     mainWindow,
@@ -190,6 +192,9 @@ export function createMainWindow(
     reloadMainWindow: (onError) => loadMainWindow(mainWindow, onError),
     rendererWebContentsId
   })
+  // Why registered here, not at definition: onSystemResume closes over `focus`, so an earlier listener would sit
+  // in its temporal dead zone.
+  powerMonitor.on('resume', onSystemResume)
   installMainWindowShortcutRouting({ focus, mainWindow, opts, store })
   const closeLifecycle = installMainWindowCloseLifecycle({
     focus,

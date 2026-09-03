@@ -417,10 +417,12 @@ describe('createMainWindow', () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { browserWindowInstance, windowHandlers } = createRendererRecoveryWindowHarness()
     const onBeforeRecoveryReload = vi.fn()
+    const onRendererRecoveryExhausted = vi.fn()
 
     withPlatform('win32', () => {
       createMainWindow(null, {
         onBeforeRecoveryReload,
+        onRendererRecoveryExhausted,
         shouldRecoverRenderer: (details) =>
           shouldRecoverRendererAfterProcessGone({
             reason: details.reason,
@@ -438,11 +440,14 @@ describe('createMainWindow', () => {
       {} as never,
       { reason: 'killed', exitCode: 1 } as Electron.RenderProcessGoneDetails
     )
-    // Why not runAllTimers: that would also expire the recovery-load watchdog, which this case is not about.
     vi.advanceTimersByTime(250)
 
-    expect(onBeforeRecoveryReload).toHaveBeenCalledWith(143)
+    expect(onBeforeRecoveryReload).toHaveBeenCalledWith(143, 'automatic')
     expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(2)
+    // Why the watchdog must stay quiet here: this reload is deliberate during logoff, and a process that
+    // outlives the session-end signal must not put a native modal on screen mid-teardown.
+    vi.runAllTimers()
+    expect(onRendererRecoveryExhausted).not.toHaveBeenCalled()
     consoleError.mockRestore()
   })
 

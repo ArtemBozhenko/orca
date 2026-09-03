@@ -48,7 +48,8 @@ describe('presentRendererRecoveryPrompt', () => {
     await run()
     expect(shown).toHaveLength(1)
     expect(shown[0].buttons).toEqual(['Reload', 'Quit'])
-    expect(shown[0].cancelId).toBe(1)
+    // Escape lands on cancelId, and this box is window-modal over the window it is about: it must not quit.
+    expect(shown[0].cancelId).toBe(0)
     expect(shown[0].detail).toContain('graphics-driver or installation problem')
     expect(reload).toHaveBeenCalledOnce()
     expect(quit).not.toHaveBeenCalled()
@@ -73,7 +74,7 @@ describe('presentRendererRecoveryPrompt', () => {
     const { run, shown } = harness({ diagnose: () => POISON, responses: [0] })
     await run()
     expect(shown[0].buttons).toEqual(['Reload', 'Copy Commands', 'Quit'])
-    expect(shown[0].cancelId).toBe(2)
+    expect(shown[0].cancelId).toBe(0)
     expect(shown[0].detail).toContain(POISON.detail)
     expect(shown[0].detail).toContain('graphics driver')
   })

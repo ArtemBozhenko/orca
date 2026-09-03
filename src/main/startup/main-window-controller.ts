@@ -128,17 +128,23 @@ export function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}
       }
       recordCrashBreadcrumb('manual_reload_requested', { ignoreCache })
     },
-    onBeforeRecoveryReload: (webContentsId) => {
+    // Why both triggers mark in-flight but only one records: the PTY orphan sweep must spare live sessions for a
+    // manual retry too, while the field counts keyed on renderer_recovery_reload still mean automatic recovery
+    // only — the prompt's Reload already records renderer_recovery_manual_retry.
+    onBeforeRecoveryReload: (webContentsId, trigger) => {
       markRecoveryReloadInFlight(webContentsId)
-      recordDurableCrashBreadcrumb('renderer_recovery_reload')
+      if (trigger === 'automatic') {
+        recordDurableCrashBreadcrumb('renderer_recovery_reload')
+      }
     },
     // Why: renderer_recovery_reload records intent before the load is issued, so a bundle could not distinguish a
     // reload that landed from one that never produced a document. This is the paired outcome.
-    onRecoveryReloadOutcome: ({ status, attempt, elapsedMs, documentScheme, errorCode }) => {
+    onRecoveryReloadOutcome: ({ status, attempt, elapsedMs, progress, afterPrompt, errorCode }) => {
       recordDurableCrashBreadcrumb(`renderer_recovery_reload_${status}`, {
         attempt,
         elapsedMs,
-        ...(documentScheme ? { documentScheme } : {}),
+        ...(progress ? { progress } : {}),
+        ...(afterPrompt ? { afterPrompt } : {}),
         ...(errorCode ? { errorCode } : {})
       })
     }

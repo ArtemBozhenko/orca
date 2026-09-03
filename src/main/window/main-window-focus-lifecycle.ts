@@ -207,7 +207,8 @@ export function installMainWindowFocusLifecycle(args: {
           cause: 'crash-loop',
           // Why watched: the prompt's manual retry is a recovery reload too, and an unwatched one that stalls
           // leaves the user with a blank window and no further prompt.
-          retry: () => recoveryReloadWatchdog.issue(details, recovery.recentRecoveryCount)
+          retry: () =>
+            recoveryReloadWatchdog.issue(details, recovery.recentRecoveryCount, 'manual-retry')
         })
         return
       }

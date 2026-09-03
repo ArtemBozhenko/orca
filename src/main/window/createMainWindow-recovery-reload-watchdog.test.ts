@@ -101,7 +101,16 @@ describe('renderer recovery reload watchdog', () => {
       windowHandlers['render-process-gone']?.({} as never, CRASH)
       vi.advanceTimersByTime(250)
     }
-    return { browserWindowInstance, consoleError, crashRenderer, settleLoad, windowHandlers }
+    const reachMilestone = (milestone: 'committed' | 'dom-ready'): void =>
+      windowHandlers[milestone === 'committed' ? 'did-navigate' : 'dom-ready']?.()
+    return {
+      browserWindowInstance,
+      consoleError,
+      crashRenderer,
+      reachMilestone,
+      settleLoad,
+      windowHandlers
+    }
   }
 
   it('retries once when the recovery reload never produces a document, then hands the user the prompt', () => {
@@ -123,7 +132,7 @@ describe('renderer recovery reload watchdog', () => {
       status: 'timeout',
       attempt: 1,
       elapsedMs: RENDERER_RECOVERY_LOAD_TIMEOUT_MS,
-      documentScheme: 'file'
+      progress: 'none'
     })
     expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(3)
     expect(onRendererRecoveryExhausted).not.toHaveBeenCalled()
@@ -263,7 +272,7 @@ describe('renderer recovery reload watchdog', () => {
       status: 'failed',
       attempt: 1,
       elapsedMs: 0,
-      documentScheme: 'file',
+      progress: 'none',
       errorCode: 'ERR_FILE_NOT_FOUND'
     })
     // sanitizeCrashReportString cannot redact a file:///Users/... URL, so nothing path-shaped may reach the crumb.
@@ -365,8 +374,113 @@ describe('renderer recovery reload watchdog', () => {
     expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(2)
 
     vi.advanceTimersByTime(1)
+    // Why the full span: rewriting the issue time on resume publishes time-since-wake into the bundle, which is
+    // silently wrong on any laptop — the outcome crumb exists to be honest about how long the load actually ran.
     expect(onRecoveryReloadOutcome).toHaveBeenCalledWith(
-      expect.objectContaining({ status: 'timeout', attempt: 1 })
+      expect.objectContaining({
+        status: 'timeout',
+        attempt: 1,
+        elapsedMs: RENDERER_RECOVERY_LOAD_TIMEOUT_MS * 2 - 1
+      })
+    )
+
+    consoleError.mockRestore()
+  })
+
+  it('never restarts a load that reached a document, and gives it the rest of the cap', () => {
+    const onRecoveryReloadOutcome = vi.fn()
+    const onRendererRecoveryExhausted = vi.fn()
+    const { browserWindowInstance, consoleError, crashRenderer, reachMilestone } = createHarness()
+
+    createMainWindow(null, { onRecoveryReloadOutcome, onRendererRecoveryExhausted })
+    crashRenderer()
+    vi.advanceTimersByTime(10_000)
+    reachMilestone('committed')
+
+    // 'no did-finish-load yet' is not a stall: a cold restart here throws away a load that already committed, and
+    // a machine that would have landed at ~60s misses the budget entirely.
+    vi.advanceTimersByTime(RENDERER_RECOVERY_LOAD_TIMEOUT_MS)
+    expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(2)
+    expect(onRecoveryReloadOutcome).not.toHaveBeenCalled()
+
+    reachMilestone('dom-ready')
+    vi.advanceTimersByTime(RENDERER_RECOVERY_LOAD_TIMEOUT_MS)
+    expect(onRecoveryReloadOutcome).toHaveBeenCalledWith({
+      status: 'timeout',
+      attempt: 1,
+      elapsedMs: RENDERER_RECOVERY_LOAD_TIMEOUT_MS * 2,
+      progress: 'dom-ready'
+    })
+    // Still never restarted, and the cap keeps the ~90s worst case the no-document path already had.
+    expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(2)
+    expect(onRendererRecoveryExhausted).toHaveBeenCalledTimes(1)
+
+    consoleError.mockRestore()
+  })
+
+  it('records a reload that lands after the prompt, and leaves the recovered window alone', () => {
+    const onRecoveryReloadOutcome = vi.fn()
+    const onRendererRecoveryExhausted = vi.fn()
+    const { browserWindowInstance, consoleError, crashRenderer, windowHandlers } = createHarness()
+
+    createMainWindow(null, { onRecoveryReloadOutcome, onRendererRecoveryExhausted })
+    crashRenderer()
+    vi.advanceTimersByTime(RENDERER_RECOVERY_LOAD_TIMEOUT_MS * 2)
+    expect(onRendererRecoveryExhausted).toHaveBeenCalledTimes(1)
+
+    onRecoveryReloadOutcome.mockClear()
+    vi.advanceTimersByTime(30_000)
+    windowHandlers['did-finish-load']?.()
+
+    // Nothing cancels a pending Chromium load, so escalation must keep watching: a bundle that reads
+    // `exhausted` for a recovery that actually worked misleads the next triage round.
+    expect(onRecoveryReloadOutcome).toHaveBeenCalledWith({
+      status: 'loaded',
+      attempt: 2,
+      elapsedMs: RENDERER_RECOVERY_LOAD_TIMEOUT_MS + 30_000,
+      afterPrompt: true
+    })
+
+    // No API dismisses a native message box, so Reload is still aimed at a window that came back; taking it
+    // would destroy the session the recovery just restored.
+    onRendererRecoveryExhausted.mock.calls[0]?.[0].retry()
+    expect(browserWindowInstance.loadFile).toHaveBeenCalledTimes(3)
+
+    consoleError.mockRestore()
+  })
+
+  it('separates the automatic recovery reload from the prompt-driven retry', () => {
+    const onBeforeRecoveryReload = vi.fn()
+    const onRendererRecoveryExhausted = vi.fn()
+    const { consoleError, crashRenderer } = createHarness()
+
+    createMainWindow(null, { onBeforeRecoveryReload, onRendererRecoveryExhausted })
+    crashRenderer()
+    vi.advanceTimersByTime(RENDERER_RECOVERY_LOAD_TIMEOUT_MS * 2)
+    onRendererRecoveryExhausted.mock.calls[0]?.[0].retry()
+
+    // The field counts keyed on renderer_recovery_reload mean 'automatic recovery'; a manual retry recorded
+    // under the same name silently redefines them.
+    expect(onBeforeRecoveryReload.mock.calls.map(([, trigger]) => trigger)).toEqual([
+      'automatic',
+      'automatic',
+      'manual-retry'
+    ])
+
+    consoleError.mockRestore()
+  })
+
+  it('keeps a shutdown-aborted load out of the crash breadcrumb stream', async () => {
+    const { consoleError, settleLoad } = createHarness()
+
+    createMainWindow(null, {})
+    settleLoad[0]?.reject(new Error(`ERR_ABORTED (-3) loading '${DOCUMENT_URL}'`))
+    await vi.advanceTimersByTimeAsync(0)
+
+    // A quit or close aborts the in-flight startup load; a healthy shutdown must not look like a launch failure.
+    expect(recordDurableCrashBreadcrumbMock).not.toHaveBeenCalledWith(
+      'main_window_load_failed',
+      expect.anything()
     )
 
     consoleError.mockRestore()

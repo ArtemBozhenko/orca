@@ -38,7 +38,9 @@ export async function presentRendererRecoveryPrompt(
       type: 'error',
       buttons,
       defaultId: 0,
-      cancelId: buttons.length - 1,
+      // Why Reload and not Quit: this box is window-modal over the very window it is about, and Escape is the
+      // reflex when one appears. Quitting on it destroys the session; retrying is recoverable either way.
+      cancelId: 0,
       title: 'Orca keeps failing to load',
       message: stalled
         ? 'The app window stopped responding while reloading after a crash.'
