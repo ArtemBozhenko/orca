@@ -104,13 +104,19 @@ export function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}
         reason: details.reason,
         expectedTeardown: getExpectedTeardownScope(webContentsId, false)
       }),
-    onRendererRecoveryExhausted: ({ details, recentRecoveryCount }) => {
-      recordDurableCrashBreadcrumb('renderer_recovery_circuit_breaker_open', {
-        reason: details.reason,
-        exitCode: details.exitCode ?? null,
-        recentRecoveryCount
-      })
-      void showRendererRecoveryPrompt(recentRecoveryCount)
+    onRendererRecoveryExhausted: ({ details, recentRecoveryCount, cause }) => {
+      // Why two names: a stalled reload never opened the breaker, and a bundle that says it did misreads the failure.
+      recordDurableCrashBreadcrumb(
+        cause === 'reload-stalled'
+          ? 'renderer_recovery_reload_exhausted'
+          : 'renderer_recovery_circuit_breaker_open',
+        {
+          reason: details.reason,
+          exitCode: details.exitCode ?? null,
+          recentRecoveryCount
+        }
+      )
+      void showRendererRecoveryPrompt(recentRecoveryCount, cause)
     },
     deferLoad: true,
     ...(options.revealOnDidFinishLoad === true ? { revealOnDidFinishLoad: true } : {}),
@@ -125,6 +131,16 @@ export function openMainWindow(options: { revealOnDidFinishLoad?: boolean } = {}
     onBeforeRecoveryReload: (webContentsId) => {
       markRecoveryReloadInFlight(webContentsId)
       recordDurableCrashBreadcrumb('renderer_recovery_reload')
+    },
+    // Why: renderer_recovery_reload records intent before the load is issued, so a bundle could not distinguish a
+    // reload that landed from one that never produced a document. This is the paired outcome.
+    onRecoveryReloadOutcome: ({ status, attempt, elapsedMs, url, error }) => {
+      recordDurableCrashBreadcrumb(`renderer_recovery_reload_${status}`, {
+        attempt,
+        elapsedMs,
+        ...(url ? { url } : {}),
+        ...(error ? { error } : {})
+      })
     }
   })
   recordCrashBreadcrumb('main_window_created')

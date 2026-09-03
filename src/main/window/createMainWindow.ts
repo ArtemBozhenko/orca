@@ -33,12 +33,18 @@ import { installWindowsPathRegistryChangeListener } from '../pty/windows-path-re
 
 export { WINDOW_QUIT_RENDERER_ACK_TIMEOUT_MS }
 
-export function loadMainWindow(mainWindow: BrowserWindow): void {
-  if (is.dev && process.env.ELECTRON_RENDERER_URL) {
-    void mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
-  } else {
-    void mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
-  }
+export function loadMainWindow(mainWindow: BrowserWindow, onError?: (error: Error) => void): void {
+  const load =
+    is.dev && process.env.ELECTRON_RENDERER_URL
+      ? mainWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
+      : mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
+  // Why: the discarded promise was the only report an ERR_FILE_NOT_FOUND/ERR_CONNECTION_REFUSED load ever made,
+  // so a recovery reload that was rejected outright left a blank window and no signal anywhere.
+  load.catch((cause: unknown) => {
+    const error = cause instanceof Error ? cause : new Error(String(cause))
+    console.error('[window] Main window load failed', error)
+    onError?.(error)
+  })
 }
 
 export function createMainWindow(
@@ -172,7 +178,7 @@ export function createMainWindow(
     isWindowClosing: state.isWindowClosing,
     mainWindow,
     opts,
-    reloadMainWindow: () => loadMainWindow(mainWindow),
+    reloadMainWindow: (onError) => loadMainWindow(mainWindow, onError),
     rendererWebContentsId
   })
   installMainWindowShortcutRouting({ focus, mainWindow, opts, store })

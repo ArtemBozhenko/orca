@@ -54,6 +54,14 @@ describe('presentRendererRecoveryPrompt', () => {
     expect(quit).not.toHaveBeenCalled()
   })
 
+  it('names the stalled reload instead of claiming a repeated crash', async () => {
+    const { run, shown } = harness({ failure: 'reload-stalled', responses: [1] })
+    await run()
+    expect(shown[0].message).toContain('stopped responding while reloading')
+    expect(shown[0].detail).toContain('never finished loading')
+    expect(shown[0].detail).not.toContain('times in a row')
+  })
+
   it('quits on the last button', async () => {
     const { run, reload, quit } = harness({ responses: [1] })
     await run()

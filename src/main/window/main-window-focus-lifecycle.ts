@@ -21,6 +21,7 @@ import {
   retireBrowserClientPageRenderer
 } from '../browser/browser-client-page-renderer-runtime'
 import { registerRendererDocumentNavigation } from './renderer-document-navigation'
+import { createRendererRecoveryReloadWatchdog } from './renderer-recovery-reload-watchdog'
 
 export type MainWindowFocusLifecycle = {
   dispose: () => void
@@ -36,7 +37,7 @@ export function installMainWindowFocusLifecycle(args: {
   isWindowClosing: () => boolean
   mainWindow: BrowserWindow
   opts?: CreateMainWindowOptions
-  reloadMainWindow: () => void
+  reloadMainWindow: (onError?: (error: Error) => void) => void
   rendererWebContentsId: number
 }): MainWindowFocusLifecycle {
   const { isWindowClosing, mainWindow, opts, reloadMainWindow, rendererWebContentsId } = args
@@ -162,6 +163,16 @@ export function installMainWindowFocusLifecycle(args: {
       rendererRecoveryTimer = null
     }
   }
+  // Why: the reload can stall with a live window and no document — no did-fail-load fires, and the breaker counts
+  // renderer deaths, so a load that never lands is invisible to every other observer on this path.
+  const recoveryReloadWatchdog = createRendererRecoveryReloadWatchdog({
+    isRecoveryPending: () => rendererRecoveryTimer !== null,
+    isWindowClosing,
+    mainWindow,
+    opts,
+    reloadMainWindow,
+    rendererWebContentsId
+  })
   const scheduleRendererRecovery = (details: Electron.RenderProcessGoneDetails): void => {
     if (
       rendererRecoveryTimer ||
@@ -195,9 +206,7 @@ export function installMainWindowFocusLifecycle(args: {
         return
       }
       // Why: a transient renderer/Network Service loss can blank Chromium; reload the app document once to recover.
-      // Why: mark this in-place reload so the did-finish-load orphan sweep spares live PTYs until session restore (#5787).
-      opts?.onBeforeRecoveryReload?.(mainWindow.webContents.id)
-      reloadMainWindow()
+      recoveryReloadWatchdog.issue(details, recovery.recentRecoveryCount)
     }, 250)
   }
   mainWindow.webContents.on('render-process-gone', (_event, details) => {
@@ -229,6 +238,7 @@ export function installMainWindowFocusLifecycle(args: {
     rendererProcessGone = false
     attachBrowserClientPageRenderer(rendererWebContents)
     clearRendererRecoveryTimer()
+    recoveryReloadWatchdog.settleLoaded()
   })
 
   const dispose = (): void => {
@@ -237,6 +247,7 @@ export function installMainWindowFocusLifecycle(args: {
     resetFloatingTerminalInputFocus()
     resetShortcutRecorderFocus()
     clearRendererRecoveryTimer()
+    recoveryReloadWatchdog.clear()
     ipcMain.removeListener(markdownFocusChannel, onMarkdownEditorFocused)
     ipcMain.removeListener(terminalInputFocusChannel, onTerminalInputFocused)
     ipcMain.removeListener(floatingFocusChannel, onFloatingFocus)

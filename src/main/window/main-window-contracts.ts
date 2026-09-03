@@ -14,11 +14,12 @@ export type CreateMainWindowOptions = {
     details: Electron.RenderProcessGoneDetails,
     webContentsId: number
   ) => boolean
-  /** Called when consecutive auto-recoveries hit the circuit-breaker limit so the host can prompt instead of crash-looping. */
+  /** Called when auto-recovery gives up — the breaker opened, or the recovery reload never produced a document. */
   onRendererRecoveryExhausted?: (info: {
     details: Electron.RenderProcessGoneDetails
     webContentsId: number
     recentRecoveryCount: number
+    cause?: 'crash-loop' | 'reload-stalled'
   }) => void
   /** Defer renderer load until IPC handlers are registered, or eager renderer calls race into missing channels. */
   deferLoad?: boolean
@@ -29,4 +30,12 @@ export type CreateMainWindowOptions = {
   onBeforeReload?: (options: { ignoreCache: boolean; webContentsId: number }) => void
   /** Marks the in-place recovery reload so did-finish-load's PTY orphan sweep spares live sessions until restore re-attaches (#5787). */
   onBeforeRecoveryReload?: (webContentsId: number) => void
+  /** Pairs an outcome with the recovery-reload intent crumb: bundles could not tell a landed reload from a stalled one. */
+  onRecoveryReloadOutcome?: (outcome: {
+    status: 'loaded' | 'timeout' | 'failed'
+    attempt: number
+    elapsedMs: number
+    url?: string
+    error?: string
+  }) => void
 }

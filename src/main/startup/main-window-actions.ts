@@ -13,7 +13,10 @@ import { focusExistingMainWindow, safelyRevealWindow } from '../window/focus-exi
 import { mainProcessState as state } from './main-process-state'
 import { loadMainWindow } from '../window/createMainWindow'
 import { describeInstallDirAclPoison } from './windows-install-dir-acl-recovery'
-import { presentRendererRecoveryPrompt } from '../window/renderer-recovery-prompt'
+import {
+  presentRendererRecoveryPrompt,
+  type RendererRecoveryPromptFailure
+} from '../window/renderer-recovery-prompt'
 
 // The window module injects this callback to avoid a cycle between actions and lifecycle code.
 let openWindow: (options?: { revealOnDidFinishLoad?: boolean }) => BrowserWindow
@@ -141,9 +144,13 @@ export function sendOpenCrashReport(targetWindow?: BrowserWindow | null): void {
 }
 
 // Why: on renderer crash-loop the breaker stops auto-reloading and the window goes blank, so a main-process dialog is the only retry/quit surface.
-export async function showRendererRecoveryPrompt(recentRecoveryCount: number): Promise<void> {
+export async function showRendererRecoveryPrompt(
+  recentRecoveryCount: number,
+  failure?: RendererRecoveryPromptFailure
+): Promise<void> {
   await presentRendererRecoveryPrompt({
     recentRecoveryCount,
+    ...(failure ? { failure } : {}),
     isQuitting: () => state.isQuitting,
     diagnose: describeInstallDirAclPoison,
     showMessageBox: (options) => {
