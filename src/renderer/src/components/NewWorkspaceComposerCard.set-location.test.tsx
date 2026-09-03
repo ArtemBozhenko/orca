@@ -225,7 +225,8 @@ describe('NewWorkspaceComposerCard set location', () => {
     container = null
   })
 
-  it('opens set-location over the composer without leaving the create dialog', () => {
+  // Async because the dialog is a lazy chunk: the click mounts Suspense, the chunk resolves next tick.
+  it('opens set-location over the composer without leaving the create dialog', async () => {
     const nestedOpenChanges: boolean[] = []
     container = renderCard({
       onNestedDialogOpenChange: (open) => nestedOpenChanges.push(open)
@@ -239,6 +240,7 @@ describe('NewWorkspaceComposerCard set location', () => {
     )
     expect(setLocation).toBeTruthy()
     act(() => setLocation?.click())
+    await act(async () => {})
 
     const dialog = document.body.querySelector('[data-testid="set-project-location-dialog"]')
     expect(dialog?.getAttribute('data-host')).toBe('Devbox')

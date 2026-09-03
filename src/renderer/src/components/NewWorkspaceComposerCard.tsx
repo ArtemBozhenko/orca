@@ -11,7 +11,7 @@ import {
   AddRemoteHostDialog,
   type AddRemoteHostMode
 } from '@/components/sidebar/AddRemoteHostDialog'
-import { SetProjectLocationDialog } from '@/components/new-workspace/SetProjectLocationDialog'
+import { lazyWithRetry } from '@/lib/lazy-with-retry'
 import { unwrapRuntimeRpcResult } from '@/runtime/runtime-rpc-client'
 import { withUiConnectTimeout } from '@/ssh/ssh-connect-ui-timeout'
 import { isSshConnectInFlight, trackSshConnect } from '@/ssh/ssh-connect-in-flight'
@@ -36,6 +36,16 @@ import {
 } from './new-workspace/new-workspace-composer-card-props'
 import { getSshStatusLabel } from './new-workspace/new-workspace-composer-ssh-status'
 import { useComposerFileDragOver } from './new-workspace/use-composer-file-drag-over'
+
+// Why lazy: this pulls the ~41 KB project-location browser onto the boot graph, and nothing
+// reaches it without an explicit "Set location" click.
+const SetProjectLocationDialog = lazyWithRetry(
+  () =>
+    import('@/components/new-workspace/SetProjectLocationDialog').then((module) => ({
+      default: module.SetProjectLocationDialog
+    })),
+  { reloadKey: 'set-project-location-dialog' }
+)
 
 export default function NewWorkspaceComposerCard(
   props: NewWorkspaceComposerCardProps
@@ -83,6 +93,12 @@ export default function NewWorkspaceComposerCard(
   const [setLocationOption, setSetLocationOption] = React.useState<NeedsProjectHostOption | null>(
     null
   )
+  // Why sticky: the dialog animates itself closed off its own `option` prop, so unmounting it
+  // when the option clears would cut that animation short.
+  const setLocationDialogRequested = React.useRef(false)
+  if (setLocationOption !== null) {
+    setLocationDialogRequested.current = true
+  }
 
   const selectedRepo = eligibleRepos.find((candidate) => candidate.id === repoId)
   const selectedRepoName = selectedRepo?.displayName ?? selectedRepo?.path ?? 'This project'
@@ -319,14 +335,18 @@ export default function NewWorkspaceComposerCard(
         submitShortcutModifierLabel={getScreenSubmitModifierLabel()}
       />
       <AddRemoteHostDialog mode={addRemoteHostMode} onOpenChange={setAddRemoteHostMode} />
-      <SetProjectLocationDialog
-        option={setLocationOption}
-        projectName={selectedProjectName}
-        projectKind={selectedRepoIsGit ? 'git' : 'folder'}
-        defaultCloneUrl={defaultCloneUrl}
-        onClose={handleSetLocationClose}
-        onReady={handleSetLocationReady}
-      />
+      {setLocationDialogRequested.current ? (
+        <React.Suspense fallback={null}>
+          <SetProjectLocationDialog
+            option={setLocationOption}
+            projectName={selectedProjectName}
+            projectKind={selectedRepoIsGit ? 'git' : 'folder'}
+            defaultCloneUrl={defaultCloneUrl}
+            onClose={handleSetLocationClose}
+            onReady={handleSetLocationReady}
+          />
+        </React.Suspense>
+      ) : null}
     </div>
   )
 }

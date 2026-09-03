@@ -31,9 +31,19 @@ import { ShortcutKeyCombo } from '@/components/ShortcutKeyCombo'
 import { showOnboardingFromRenderer } from '../onboarding/show-onboarding-event'
 import { SetupGuideProgressRing } from '../setup-guide/SetupGuideProgressRing'
 import { useSetupGuideProgress } from '../setup-guide/use-setup-guide-progress'
-import { SidebarFeedbackDialog } from './SidebarFeedbackDialog'
+import { lazyWithRetry } from '@/lib/lazy-with-retry'
 import { translate } from '@/i18n/i18n'
 import { getUpdateCheckClickOptions, getUpdateCheckHint } from '@/lib/update-check-click-options'
+
+// Why lazy: the feedback form is only reachable from this menu's own item, so it does not
+// belong on the renderer boot graph.
+const SidebarFeedbackDialog = lazyWithRetry(
+  () =>
+    import('./SidebarFeedbackDialog').then((module) => ({
+      default: module.SidebarFeedbackDialog
+    })),
+  { reloadKey: 'sidebar-feedback-dialog' }
+)
 
 const DOCS_URL = 'https://www.onorca.dev/docs'
 const CHANGELOG_URL = 'https://onorca.dev/changelog'
@@ -95,6 +105,11 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
   const settingsShortcut = useShortcutKeyDetails('app.settings')
   const [menuOpen, setMenuOpen] = useState(false)
   const [feedbackOpen, setFeedbackOpen] = useState(false)
+  // Why sticky: the dialog animates itself closed off `open`, so unmounting on close cuts that short.
+  const feedbackDialogRequested = React.useRef(false)
+  if (feedbackOpen) {
+    feedbackDialogRequested.current = true
+  }
   const [isRestartingOrca, setIsRestartingOrca] = useState(false)
   const lastShowOnboardingAtRef = React.useRef(0)
   const updateCheckModifiersRef = React.useRef(NO_UPDATE_CHECK_MODIFIERS)
@@ -330,7 +345,11 @@ export function SidebarSettingsHelpMenu(): React.JSX.Element {
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
-      <SidebarFeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
+      {feedbackDialogRequested.current ? (
+        <React.Suspense fallback={null}>
+          <SidebarFeedbackDialog open={feedbackOpen} onOpenChange={setFeedbackOpen} />
+        </React.Suspense>
+      ) : null}
     </>
   )
 }
