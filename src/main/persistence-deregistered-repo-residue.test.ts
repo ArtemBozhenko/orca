@@ -91,7 +91,9 @@ describe('deregistered repo residue', () => {
     reloaded.flush()
     const swept = readDataFile() as PersistedState
 
-    expect(Object.keys(swept.worktreeMeta)).toEqual([LIVE_WORKTREE])
+    // Read back through a load: the locator projection is written only where the identity map
+    // cannot rebuild it, so the file alone no longer shows which rows a reader ends up with.
+    expect(Object.keys((await createStore()).getAllWorktreeMeta())).toEqual([LIVE_WORKTREE])
     expect(swept.worktreeIdentityAliases).not.toHaveProperty(
       composeWorktreeHostIdentity('local', GONE_WORKTREE)
     )

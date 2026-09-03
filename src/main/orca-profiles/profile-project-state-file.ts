@@ -16,6 +16,7 @@ import type { WorkspaceSessionState } from '../../shared/workspace-session-state
 import type { SparsePreset } from '../../shared/worktree/create-types'
 import type { RetiredNameRegistry } from '../../shared/worktree/retired-name-registry'
 import { getOrcaProfileDataFile } from './profile-index-store'
+import { hydrateWorktreeMetaAliasProjection } from '../persistence/loading-store/worktree-meta-alias-projection'
 
 export type TransferProfileState = PersistedState
 
@@ -57,7 +58,15 @@ export function readProfileState(profileId: string, userDataPath: string): Trans
     retiredWorktreeNamesByNamespace: recordOrEmpty<RetiredNameRegistry>(
       parsed.retiredWorktreeNamesByNamespace
     ),
-    worktreeMeta: recordOrEmpty(parsed.worktreeMeta),
+    // Another profile's file carries the projected shape too, and this read bypasses the Store's
+    // load path, so the locator rows have to be rebuilt here before the transfer reads them.
+    worktreeMeta: hydrateWorktreeMetaAliasProjection({
+      worktreeMeta: recordOrEmpty(parsed.worktreeMeta),
+      worktreeMetaByIdentity: parsed.worktreeMetaByIdentity,
+      worktreeIdentityAliases: parsed.worktreeIdentityAliases,
+      worktreeMetaAliasesWithoutLegacyRow: parsed.worktreeMetaAliasesWithoutLegacyRow
+    }),
+    worktreeMetaAliasesWithoutLegacyRow: undefined,
     worktreeLineageById: recordOrEmpty(parsed.worktreeLineageById),
     workspaceLineageByChildKey: recordOrEmpty(parsed.workspaceLineageByChildKey),
     settings: isRecord(parsed.settings)

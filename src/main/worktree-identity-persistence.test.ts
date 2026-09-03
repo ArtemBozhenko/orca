@@ -105,8 +105,10 @@ describe('host-qualified worktree metadata', () => {
     expect(second?.instanceId).toBe(first?.instanceId)
     expect(store.getWorktreeMetaForHost(worktreeId, 'local')?.comment).toBe('after migration')
     const migrated = readDataFile() as PersistedState
-    expect(migrated.worktreeMeta[worktreeId]?.hostId).toBe('local')
     expect(Object.keys(migrated.worktreeMetaByIdentity ?? {})).toHaveLength(1)
+    // Read back through a load: the locator row is written only where the identity map cannot
+    // rebuild it, so the backfilled host is asserted on the state a reader ends up with.
+    expect(createStore().getWorktreeMeta(worktreeId)?.hostId).toBe('local')
   })
   // Fails open on purpose: an ambiguous alias used to brick reads and throw out of the worktree
   // listing loop, taking every workspace in the repo down with it and never self-healing.

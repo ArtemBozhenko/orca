@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { folderWorkspaceKey } from '../../shared/workspace-scope'
+import { getWorktreeIdFromHostIdentity } from '../../shared/worktree/host-qualified-identity'
 import {
   getOrcaProfileDataFile,
   getProfileUserDataPath
@@ -61,11 +62,23 @@ function readProfileWorktreeIds(dataFile: string): Set<string> | null {
   if (!parsed || typeof parsed !== 'object') {
     return null
   }
-  const state = parsed as { worktreeMeta?: unknown; folderWorkspaces?: unknown }
+  const state = parsed as {
+    worktreeMeta?: unknown
+    worktreeIdentityAliases?: unknown
+    folderWorkspaces?: unknown
+  }
   const ids = new Set<string>()
   if (state.worktreeMeta && typeof state.worktreeMeta === 'object') {
     for (const id of Object.keys(state.worktreeMeta)) {
       ids.add(id)
+    }
+  }
+  // The serializer omits any `worktreeMeta` row the identity map can rebuild, so the alias keys
+  // are the only place those ids still appear in the file — and a missed id means deleting shell
+  // history a live workspace is using.
+  if (state.worktreeIdentityAliases && typeof state.worktreeIdentityAliases === 'object') {
+    for (const alias of Object.keys(state.worktreeIdentityAliases)) {
+      ids.add(getWorktreeIdFromHostIdentity(alias))
     }
   }
   if (Array.isArray(state.folderWorkspaces)) {

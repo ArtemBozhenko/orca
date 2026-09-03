@@ -81,6 +81,10 @@ export type PersistedState = {
   worktreeMetaByIdentity?: Record<string, WorktreeMeta>
   /** Host-qualified locator aliases to canonical identity keys. */
   worktreeIdentityAliases?: Record<string, string[]>
+  /** Written on every save once `worktreeMeta` is projected onto the identity map; its presence is
+   *  what tells the load path to rebuild. Lists the aliases whose locator row is genuinely absent,
+   *  so a removal is never resurrected. Serialize-only: never carried in memory. */
+  worktreeMetaAliasesWithoutLegacyRow?: string[]
   worktreeLineageById: Record<string, WorktreeLineage>
   workspaceLineageByChildKey: Record<WorkspaceKey, WorkspaceLineage>
   settings: GlobalSettings
