@@ -12,10 +12,14 @@ export type {
   WslGuestProcessInventory,
   WslGuestProcessRow
 } from './wsl-guest-process-inventory-parser'
-export { resolveWslGuestForegroundProcess } from './wsl-guest-foreground-process-resolution'
+export {
+  createWslGuestProcessIndexes,
+  resolveWslGuestForegroundProcess
+} from './wsl-guest-foreground-process-resolution'
 export type {
   WslGuestForegroundResolution,
-  WslGuestProcessAnchor
+  WslGuestProcessAnchor,
+  WslGuestProcessIndexes
 } from './wsl-guest-foreground-process-resolution'
 
 export type WslGuestProcessInventoryRead =
@@ -33,6 +37,8 @@ export type WslGuestProcessInventoryFailureReason =
 const INVENTORY_TIMEOUT_MS = 5_000
 const INVENTORY_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
 const INVENTORY_TTL_MS = 500
+export const WSL_GUEST_INVENTORY_MAX_CONCURRENCY = 4
+const INVENTORY_CACHE_MAX_DISTROS = 32
 const CAPTURE_NONCE_ENV = 'ORCA_WSL_CAPTURE_NONCE'
 
 /**
@@ -83,40 +89,82 @@ export const WSL_GUEST_INVENTORY_SCRIPT = [
 ].join('\n')
 
 type ReaderDeps = {
-  run?: (distro: string) => Promise<WslGuestProcessInventoryRead>
+  run?: (
+    distro: string,
+    opts?: { deadlineMs?: number; signal?: AbortSignal }
+  ) => Promise<WslGuestProcessInventoryRead>
   now?: () => number
   ttlMs?: number
 }
 
+export type WslGuestProcessInventoryReadOptions = {
+  deadlineMs?: number
+  signal?: AbortSignal
+}
+
 /** Construct a per-distro single-flight/TTL reader; exported for deterministic tests. */
 export function createWslGuestProcessInventoryReader(deps: ReaderDeps = {}): {
-  read: (distro: string) => Promise<WslGuestProcessInventoryRead>
+  read: (
+    distro: string,
+    opts?: WslGuestProcessInventoryReadOptions
+  ) => Promise<WslGuestProcessInventoryRead>
   reset: () => void
 } {
   const now = deps.now ?? (() => Date.now())
   const ttlMs = deps.ttlMs ?? INVENTORY_TTL_MS
   const cached = new Map<string, { value: WslGuestProcessInventoryRead; at: number }>()
   const inFlight = new Map<string, Promise<WslGuestProcessInventoryRead>>()
+  let resetGeneration = 0
   const run = deps.run ?? runWslGuestProcessInventory
 
-  const read = (distro: string): Promise<WslGuestProcessInventoryRead> => {
+  const read = (
+    distro: string,
+    opts?: WslGuestProcessInventoryReadOptions
+  ): Promise<WslGuestProcessInventoryRead> => {
     const cleanedDistro = distro.trim()
     const key = cleanedDistro.toLowerCase()
+    const currentTime = now()
+    for (const [cachedKey, entry] of cached) {
+      if (currentTime - entry.at >= ttlMs) {
+        cached.delete(cachedKey)
+      }
+    }
     const prior = cached.get(key)
-    if (prior && now() - prior.at < ttlMs) {
+    if (prior) {
+      // Touch the entry so the map order is a true LRU order while retaining
+      // the completion timestamp used by the TTL.
+      cached.delete(key)
+      cached.set(key, prior)
       return Promise.resolve(prior.value)
+    }
+    if (
+      opts?.signal?.aborted ||
+      (opts?.deadlineMs !== undefined && opts.deadlineMs <= currentTime)
+    ) {
+      return Promise.resolve({ status: 'unverifiable', reason: 'capture_timed_out' })
     }
     const active = inFlight.get(key)
     if (active) {
       return active
     }
-    const pending = run(cleanedDistro)
+    const generationAtStart = resetGeneration
+    const pending = run(cleanedDistro, opts)
       .catch((): WslGuestProcessInventoryRead => ({
         status: 'unverifiable',
         reason: 'capture_failed'
       }))
       .then((value) => {
+        if (generationAtStart !== resetGeneration) {
+          return value
+        }
         cached.set(key, { value, at: now() })
+        while (cached.size > INVENTORY_CACHE_MAX_DISTROS) {
+          const oldest = cached.keys().next().value
+          if (oldest === undefined) {
+            break
+          }
+          cached.delete(oldest)
+        }
         return value
       })
       .finally(() => {
@@ -130,13 +178,20 @@ export function createWslGuestProcessInventoryReader(deps: ReaderDeps = {}): {
   return {
     read,
     reset: () => {
+      resetGeneration += 1
       cached.clear()
       inFlight.clear()
     }
   }
 }
 
-async function runWslGuestProcessInventory(distro: string): Promise<WslGuestProcessInventoryRead> {
+async function runWslGuestProcessInventory(
+  distro: string,
+  opts?: WslGuestProcessInventoryReadOptions
+): Promise<WslGuestProcessInventoryRead> {
+  if (opts?.signal?.aborted || (opts?.deadlineMs !== undefined && opts.deadlineMs <= Date.now())) {
+    return { status: 'unverifiable', reason: 'capture_timed_out' }
+  }
   const captureNonce = `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`
   const captured = buildWslCapturedLoginShellCommand(WSL_GUEST_INVENTORY_SCRIPT, captureNonce, {
     nonceEnvVar: CAPTURE_NONCE_ENV
@@ -162,13 +217,17 @@ async function runWslGuestProcessInventory(distro: string): Promise<WslGuestProc
         WSLENV: wslenvEntries.join(':'),
         [CAPTURE_NONCE_ENV]: captureNonce
       },
-      timeoutMs: INVENTORY_TIMEOUT_MS,
+      timeoutMs:
+        opts?.deadlineMs === undefined
+          ? INVENTORY_TIMEOUT_MS
+          : Math.max(1, Math.min(INVENTORY_TIMEOUT_MS, opts.deadlineMs - Date.now())),
+      ...(opts?.signal ? { signal: opts.signal } : {}),
       maxOutputBytes: INVENTORY_MAX_OUTPUT_BYTES
     })
   } catch {
     return { status: 'unverifiable', reason: 'wsl_unavailable' }
   }
-  if (result.timedOut) {
+  if (result.timedOut || opts?.signal?.aborted) {
     return { status: 'unverifiable', reason: 'capture_timed_out' }
   }
   if (result.code === 127) {
@@ -197,11 +256,14 @@ async function runWslGuestProcessInventory(distro: string): Promise<WslGuestProc
 const defaultReader = createWslGuestProcessInventoryReader()
 
 export function readWslGuestProcessInventory(
-  distro: string
+  distro: string,
+  opts?: WslGuestProcessInventoryReadOptions
 ): Promise<WslGuestProcessInventoryRead> {
-  return defaultReader.read(distro)
+  return defaultReader.read(distro, opts)
 }
 
-export function resetWslGuestProcessInventoryForTests(): void {
+export function resetWslGuestProcessInventory(): void {
   defaultReader.reset()
 }
+
+export const resetWslGuestProcessInventoryForTests = resetWslGuestProcessInventory

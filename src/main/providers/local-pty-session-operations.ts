@@ -24,8 +24,10 @@ import {
 import type { LocalPtyProviderOptions } from './local-pty-provider-types'
 import type { PtyProcessInfo } from './types'
 import {
+  createWslGuestProcessIndexes,
   readWslGuestProcessInventory,
   resolveWslGuestForegroundProcess,
+  WSL_GUEST_INVENTORY_MAX_CONCURRENCY,
   type WslGuestProcessInventoryRead
 } from './wsl-guest-process-inventory'
 import type { ForegroundProcessEvidence } from '../../shared/foreground-process-evidence'
@@ -122,7 +124,10 @@ export function closeLocalPtyStartupQueryAuthority(id: string): number {
   return startupIngressByPty.get(id)?.closeQueryAuthority() ?? 0
 }
 
-export async function listLocalPtyProcesses(): Promise<PtyProcessInfo[]> {
+export async function listLocalPtyProcesses(opts?: {
+  deadlineMs?: number
+  signal?: AbortSignal
+}): Promise<PtyProcessInfo[]> {
   const entries = Array.from(ptyProcesses.entries())
   const evidenceEpoch = Date.now()
   const wslByDistro = new Map<string, string[]>()
@@ -137,11 +142,31 @@ export async function listLocalPtyProcesses(): Promise<PtyProcessInfo[]> {
     }
   }
   const inventories = new Map<string, WslGuestProcessInventoryRead>()
+  const distros = [...wslByDistro.keys()]
+  let nextDistroIndex = 0
+  const readNextDistro = async (): Promise<void> => {
+    while (nextDistroIndex < distros.length) {
+      const distro = distros[nextDistroIndex++]!
+      inventories.set(
+        distro,
+        await readWslGuestProcessInventory(distro, {
+          deadlineMs: opts?.deadlineMs,
+          signal: opts?.signal
+        })
+      )
+    }
+  }
   await Promise.all(
-    [...wslByDistro.keys()].map(async (distro) => {
-      inventories.set(distro, await readWslGuestProcessInventory(distro))
-    })
+    Array.from({ length: Math.min(WSL_GUEST_INVENTORY_MAX_CONCURRENCY, distros.length) }, () =>
+      readNextDistro()
+    )
   )
+  const indexesByDistro = new Map<string, ReturnType<typeof createWslGuestProcessIndexes>>()
+  for (const [distro, read] of inventories) {
+    if (read.status === 'ok') {
+      indexesByDistro.set(distro, createWslGuestProcessIndexes(read.inventory))
+    }
+  }
 
   return entries.flatMap(([id, proc]) => {
     // Inventory reads are asynchronous; a PTY may have exited while they ran.
@@ -157,7 +182,11 @@ export async function listLocalPtyProcesses(): Promise<PtyProcessInfo[]> {
       const anchor = ptyWslShellAnchors.get(id)
       const resolution =
         read?.status === 'ok' && anchor
-          ? resolveWslGuestForegroundProcess(read.inventory, anchor)
+          ? resolveWslGuestForegroundProcess(
+              read.inventory,
+              anchor,
+              indexesByDistro.get(distro) ?? createWslGuestProcessIndexes(read.inventory)
+            )
           : {
               status: 'unverifiable' as const,
               reason: read?.status === 'unverifiable' ? read.reason : 'anchor_missing'

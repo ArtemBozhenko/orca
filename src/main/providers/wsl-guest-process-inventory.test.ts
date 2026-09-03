@@ -166,6 +166,31 @@ describe('WSL guest process inventory', () => {
     ).toEqual({ status: 'unverifiable', reason: 'pid_reused' })
   })
 
+  it('resolves against a prebuilt inventory index without rescanning rows', () => {
+    const inventory = parseWslGuestProcessInventoryPayload(
+      payload(
+        [
+          'row 100 90 90 100 100 pts/0 Ss+ 12345 bash',
+          'row 101 100 100 101 101 pts/0 Sl+ 54321 codex'
+        ].join('\n'),
+        2
+      ),
+      'Ubuntu'
+    )
+    const indexes = {
+      byPid: new Map(),
+      byForegroundGroup: new Map(),
+      multiplexerRows: []
+    }
+    expect(
+      resolveWslGuestForegroundProcess(
+        inventory,
+        { distro: 'Ubuntu', bootId, shellPid: 100, shellStartTime: 12345, tty: '/dev/pts/0' },
+        indexes
+      )
+    ).toEqual({ status: 'unverifiable', reason: 'anchor_missing' })
+  })
+
   it('does not claim identity across a multiplexer boundary', () => {
     const inventory = parseWslGuestProcessInventoryPayload(
       payload(
@@ -210,6 +235,55 @@ describe('WSL guest process inventory', () => {
     now = 501
     await reader.read('Ubuntu')
     expect(calls).toBe(3)
+  })
+
+  it('bounds the derived inventory cache and evicts the least-recently-used distro', async () => {
+    let calls = 0
+    const reader = createWslGuestProcessInventoryReader({
+      run: async (distro) => {
+        calls += 1
+        return { status: 'ok', inventory: { distro, bootId, rows: [] } }
+      }
+    })
+    for (let index = 0; index < 40; index += 1) {
+      await reader.read(`distro-${index}`)
+    }
+    expect(calls).toBe(40)
+    await reader.read('distro-0')
+    expect(calls).toBe(41)
+    await reader.read('distro-39')
+    expect(calls).toBe(41)
+  })
+
+  it('passes caller cancellation and deadline through to the guest probe', async () => {
+    let observedOpts: { deadlineMs?: number; signal?: AbortSignal } | undefined
+    const run = vi.fn(
+      async (distro: string, opts?: { deadlineMs?: number; signal?: AbortSignal }) => {
+        observedOpts = opts
+        return { status: 'ok' as const, inventory: { distro, bootId, rows: [] } }
+      }
+    )
+    const reader = createWslGuestProcessInventoryReader({ run, now: () => 0 })
+    const signal = new AbortController().signal
+    await reader.read('Ubuntu', { deadlineMs: 1234, signal })
+    expect(run).toHaveBeenCalledOnce()
+    expect(observedOpts?.deadlineMs).toBe(1234)
+    expect(observedOpts?.signal).toBe(signal)
+  })
+
+  it('bounds the guest process timeout by the caller deadline', async () => {
+    runProcessMock.mockResolvedValue({ code: 127, stdout: '', stderr: '', timedOut: false })
+    resetWslGuestProcessInventoryForTests()
+    const signal = new AbortController().signal
+    const deadlineMs = Date.now() + 1_000
+    await readWslGuestProcessInventory('Ubuntu', { deadlineMs, signal })
+    const spec = runProcessMock.mock.calls[0]?.[0] as {
+      timeoutMs?: number
+      signal?: AbortSignal
+    }
+    expect(spec.timeoutMs).toBeGreaterThan(0)
+    expect(spec.timeoutMs).toBeLessThanOrEqual(1_000)
+    expect(spec.signal).toBe(signal)
   })
 
   it.each([1, 8, 32])('uses one guest inventory for a %s-pane burst', async (paneCount) => {

@@ -4,6 +4,7 @@ import type { PtyStartupIngress } from '../../shared/pty-startup-ingress'
 import type { TerminalExitCause } from '../../shared/terminal-exit-cause'
 import { normalizeLocalCallerSessionId } from './local-pty-launch-helpers'
 import type { WslShellProcessAnchor } from '../../shared/wsl-shell-process-anchor'
+import { resetWslGuestProcessInventory } from './wsl-guest-process-inventory'
 
 export type PtyShutdownOperation = {
   promise: Promise<void>
@@ -132,6 +133,7 @@ export function clearPtyState(id: string): void {
   ptyTerminationMode.delete(id)
   ptyReportsChildExitStatus.delete(id)
   ptyPhysicalExits.delete(id)
+  resetWslGuestProcessInventory()
 }
 
 /**

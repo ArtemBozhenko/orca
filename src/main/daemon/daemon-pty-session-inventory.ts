@@ -16,13 +16,18 @@ import { PtyProcessListAdmission } from '../providers/pty-process-list-admission
 import type { PtyProcessInfo } from '../providers/types'
 import type { ForegroundProcessEvidence } from '../../shared/foreground-process-evidence'
 import {
+  createWslGuestProcessIndexes,
   readWslGuestProcessInventory,
   resolveWslGuestForegroundProcess,
+  WSL_GUEST_INVENTORY_MAX_CONCURRENCY,
   type WslGuestProcessInventoryRead
 } from '../providers/wsl-guest-process-inventory'
 
 export abstract class DaemonPtySessionInventory extends DaemonPtyProcessInspection {
-  async listProcesses(opts?: { deadlineMs?: number }): Promise<PtyProcessInfo[]> {
+  async listProcesses(opts?: {
+    deadlineMs?: number
+    signal?: AbortSignal
+  }): Promise<PtyProcessInfo[]> {
     // Why: snapshotted before the request so ids spawned mid-flight can never
     // be reconciled away below.
     const preRequestActiveIds = new Set(this.activeSessionIds)
@@ -60,11 +65,32 @@ export abstract class DaemonPtySessionInventory extends DaemonPtyProcessInspecti
             .filter((session) => session.wslShellAnchor)
             .map((session) => session.wslDistro as string)
         )
+        const distroList = [...distros]
+        let nextDistroIndex = 0
+        const readNextDistro = async (): Promise<void> => {
+          while (nextDistroIndex < distroList.length) {
+            const distro = distroList[nextDistroIndex++]!
+            wslByDistro.set(
+              distro,
+              await readWslGuestProcessInventory(distro, {
+                deadlineMs: opts?.deadlineMs,
+                signal: opts?.signal
+              })
+            )
+          }
+        }
         await Promise.all(
-          [...distros].map(async (distro) => {
-            wslByDistro.set(distro, await readWslGuestProcessInventory(distro))
-          })
+          Array.from(
+            { length: Math.min(WSL_GUEST_INVENTORY_MAX_CONCURRENCY, distroList.length) },
+            () => readNextDistro()
+          )
         )
+      }
+      const indexesByDistro = new Map<string, ReturnType<typeof createWslGuestProcessIndexes>>()
+      for (const [distro, inventory] of wslByDistro) {
+        if (inventory.status === 'ok') {
+          indexesByDistro.set(distro, createWslGuestProcessIndexes(inventory.inventory))
+        }
       }
       for (const session of result.sessions) {
         if (!session.isAlive) {
@@ -75,7 +101,12 @@ export abstract class DaemonPtySessionInventory extends DaemonPtyProcessInspecti
         const inventory = session.wslDistro ? wslByDistro.get(session.wslDistro) : undefined
         const resolution =
           session.wslDistro && session.wslShellAnchor && inventory?.status === 'ok'
-            ? resolveWslGuestForegroundProcess(inventory.inventory, session.wslShellAnchor)
+            ? resolveWslGuestForegroundProcess(
+                inventory.inventory,
+                session.wslShellAnchor,
+                indexesByDistro.get(session.wslDistro) ??
+                  createWslGuestProcessIndexes(inventory.inventory)
+              )
             : null
         const foregroundProcessEvidence: ForegroundProcessEvidence | undefined = session.wslDistro
           ? resolution?.status === 'live'
