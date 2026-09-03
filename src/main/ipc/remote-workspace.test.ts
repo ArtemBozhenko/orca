@@ -154,9 +154,10 @@ describe('remoteWorkspace:setForConnectedTargets', () => {
   const getRepoMock = vi.fn<Store['getRepo']>()
   const getWorkspaceSessionMock = vi.fn<Store['getWorkspaceSession']>()
   // Ownership resolution reads the catalog, not one id-keyed row, so the fake has to project one.
+  const getReposMock = vi.fn(() => [getRepoMock('repo-target-1')].filter(Boolean))
   const store = {
     getRepo: getRepoMock,
-    getRepos: () => [getRepoMock('repo-target-1')].filter(Boolean),
+    getRepos: getReposMock,
     getWorkspaceSession: getWorkspaceSessionMock
   } as unknown as Store
 
@@ -176,6 +177,7 @@ describe('remoteWorkspace:setForConnectedTargets', () => {
       getTarget: (targetId: string) => targets.find((target) => target.id === targetId)
     })
     getRepoMock.mockReset()
+    getReposMock.mockClear()
     getWorkspaceSessionMock.mockReset()
     getWorkspaceSessionMock.mockReturnValue(baseSession)
     getRepoMock.mockImplementation((repoId: string) =>
@@ -250,6 +252,31 @@ describe('remoteWorkspace:setForConnectedTargets', () => {
     }
     return observed as RemoteWorkspaceObservedSnapshot
   }
+
+  it('reads the repo catalog once per publish, not once per worktree', async () => {
+    // `store.getRepos()` re-hydrates every repo row. The export asks "is this worktree mine?" once
+    // per worktree, so reading the catalog inside that callback multiplied hydration by the
+    // worktree count — 413 on the session that surfaced this.
+    const worktrees = Object.fromEntries(
+      Array.from({ length: 12 }, (_, index) => [`repo-target-1::/remote/repo-${index}`, []])
+    )
+    getWorkspaceSessionMock.mockReturnValue({
+      ...baseSession,
+      tabsByWorktree: worktrees
+    } as WorkspaceSessionState)
+    const observed = await observeTarget('target-1')
+    getReposMock.mockClear()
+
+    await callSetForConnectedTargets({
+      hydratedTargetIds: ['target-1'],
+      expectedRevisionsByTargetId: { 'target-1': observed.snapshot?.revision ?? 7 },
+      expectedHostObservationTokensByTargetId: {
+        'target-1': observed.hostObservationToken
+      }
+    })
+
+    expect(getReposMock).toHaveBeenCalledTimes(1)
+  })
 
   it('does not write without an explicit non-empty hydrated target set', async () => {
     await expect(callSetForConnectedTargets({ session: baseSession })).resolves.toEqual([])
