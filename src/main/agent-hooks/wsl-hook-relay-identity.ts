@@ -16,7 +16,7 @@ export async function readWslRelayProcessIdentity(options: {
   distro: string
   anchors: readonly WslShellProcessAnchor[]
   deps: WslHookRelayManagerDeps
-  ensure: (distro: string) => Promise<void>
+  ensure: (distro: string) => Promise<void> | void
   getState: (distro: string) => { phase: string; mux?: SshChannelMultiplexer } | undefined
   disposed: boolean
   requestOptions?: { signal?: AbortSignal; timeoutMs?: number }
@@ -26,7 +26,15 @@ export async function readWslRelayProcessIdentity(options: {
   if (options.disposed || options.deps.platform() !== 'win32' || !options.distro.trim()) {
     return unavailable('wsl_unavailable')
   }
-  await options.ensure(options.distro)
+  // Identity reads must stay within their caller's deadline. Starting a relay
+  // can boot WSL and install guest hooks, so trigger that work in the background
+  // and report the current unavailable state until a later read observes it.
+  try {
+    void Promise.resolve(options.ensure(options.distro)).catch(() => undefined)
+  } catch {
+    // A disposed/tearing-down manager may reject synchronously; the read remains
+    // an honest unavailable result.
+  }
   const state = options.getState(options.distro)
   const mux = state?.mux
   if (!mux || mux.isDisposed() || state.phase !== 'running') {

@@ -7,8 +7,41 @@ import {
 } from '../orca-runtime-test-mocks.spec'
 import type { WorktreeMeta } from '../orca-runtime-test-mocks.spec'
 import { makeWorktreeMeta, store, syncSinglePty } from '../orca-runtime-test-fixtures.spec'
+import {
+  getWslRelayIdentityRpcCount,
+  resetWslRelayIdentityRpcCount
+} from '../../agent-hooks/wsl-hook-relay-manager'
 
 describe('OrcaRuntimeService', () => {
+  it('does not read guest inventories on idle worktree poll ticks', async () => {
+    resetWslRelayIdentityRpcCount()
+    const relayProcessReads = vi.fn()
+    const runtime = new OrcaRuntimeService(store)
+    runtime.setPtyController({
+      write: () => true,
+      kill: () => true,
+      getForegroundProcess: async () => null,
+      listProcesses: async () => {
+        relayProcessReads()
+        return []
+      }
+    })
+
+    // Several sustained mobile ticks must remain completely read-free while no
+    // PTY lifecycle/output event invalidates the census.
+    for (let tick = 0; tick < 10; tick += 1) {
+      await runtime.getWorktreePs()
+      await new Promise((resolve) => setTimeout(resolve, 10))
+    }
+    expect(relayProcessReads).not.toHaveBeenCalled()
+    expect(getWslRelayIdentityRpcCount()).toBe(0)
+
+    runtime.notifyBranchRenamed('repo-1')
+    await runtime.getWorktreePs()
+    expect(relayProcessReads).toHaveBeenCalledOnce()
+    await runtime.getWorktreePs()
+    expect(relayProcessReads).toHaveBeenCalledOnce()
+  })
   it('keeps pinned and unread worktrees when active rows fill the mobile summary limit', async () => {
     setPlatform('win32')
     const remoteRepo = {

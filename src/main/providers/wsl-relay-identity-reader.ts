@@ -45,7 +45,13 @@ export function createWslRelayIdentityReader(
         prior.anchors.map((anchor, index) => [JSON.stringify(anchor), prior.results[index]!])
       )
       if (anchors.every((anchor) => byAnchor.has(JSON.stringify(anchor)))) {
-        return anchors.map((anchor) => byAnchor.get(JSON.stringify(anchor))!)
+        return anchors.map((anchor) => {
+          const result = byAnchor.get(JSON.stringify(anchor))!
+          return {
+            ...result,
+            capturedAgeMs: result.capturedAgeMs + Math.max(0, now - prior.at)
+          }
+        })
       }
     }
     const active = pending.get(key)

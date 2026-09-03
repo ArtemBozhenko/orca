@@ -24,20 +24,7 @@ import { SshAgentSessionCapabilities } from './ssh-agent-session-capabilities'
 import type { PtyProcessInspection } from './pty-process-inspection'
 import { writeToSshPty, writeToSshPtyWithSettlement } from './ssh-pty-write'
 import { spawnWithTerminalRuntimeRepair, type TerminalRepairHook } from './ssh-pty-spawn-repair'
-
-// Why: sequential relay teardown calls share one absolute budget; convert to the mux-relative timeout only at dispatch.
-function relayTimeoutOptions(
-  deadlineMs: number | undefined,
-  signal?: AbortSignal
-): { timeoutMs?: number; signal?: AbortSignal } | undefined {
-  if (deadlineMs === undefined && signal === undefined) {
-    return undefined
-  }
-  return {
-    ...(deadlineMs === undefined ? {} : { timeoutMs: Math.max(1, deadlineMs - Date.now()) }),
-    ...(signal ? { signal } : {})
-  }
-}
+import { relayTimeoutOptions } from './ssh-pty-provider-timeout'
 
 /** Remote PTY provider that proxies IPtyProvider operations through the relay. */
 export class SshPtyProvider implements IPtyProvider {

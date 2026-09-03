@@ -22,6 +22,11 @@ import {
   AGENT_HOOK_NOTIFICATION_METHOD,
   AGENT_HOOK_REQUEST_REPLAY_METHOD
 } from '../../shared/agent-hook-relay'
+import { WSL_RELAY_PROCESS_METHODS } from '../../shared/wsl-hook-relay-contract'
+import {
+  getWslRelayIdentityRpcCount,
+  resetWslRelayIdentityRpcCount
+} from './wsl-hook-relay-manager'
 
 type GuestHarness = {
   transport: MultiplexerTransport
@@ -440,6 +445,44 @@ describe('WslHookRelayManager', () => {
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(deps.spawnRelay).toHaveBeenCalledTimes(2)
     expect(deps.installCodex).toHaveBeenCalled()
+    manager.disposeAll()
+  })
+
+  it('serves identity reads through connectWslRelayState with hooks disabled', async () => {
+    resetWslRelayIdentityRpcCount()
+    const waitForSentinel = vi.fn(async () => {
+      const transport = guestTransport()
+      const guest = harnesses.at(-1)!.guestDispatcher
+      guest.onRequest(WSL_RELAY_PROCESS_METHODS.identityRead, async (params) => ({
+        capability: 'process.identity',
+        results: (params as { anchors: unknown[] }).anchors.map((anchor) => ({
+          status: 'live',
+          processName: 'claude',
+          anchor,
+          capturedAgeMs: 0
+        }))
+      }))
+      return transport
+    })
+    const { manager, deps } = createManager({
+      waitForSentinel,
+      managedHookSettings: () => ({ agentStatusHooksEnabled: false })
+    })
+    manager.ensureForDistro('Ubuntu')
+    await vi.waitFor(() => expect(manager.getGuestEndpointFilePath('Ubuntu')).not.toBeNull())
+
+    const anchor = {
+      distro: 'Ubuntu',
+      bootId: '11111111-1111-1111-1111-111111111111',
+      shellPid: 1,
+      shellStartTime: 1,
+      tty: '/dev/pts/1'
+    }
+    await expect(manager.readProcessIdentity('Ubuntu', [anchor])).resolves.toMatchObject([
+      { status: 'live', processName: 'claude' }
+    ])
+    expect(getWslRelayIdentityRpcCount()).toBe(1)
+    expect(deps.installHooks).not.toHaveBeenCalled()
     manager.disposeAll()
   })
 

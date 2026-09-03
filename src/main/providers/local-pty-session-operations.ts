@@ -151,10 +151,13 @@ export async function listLocalPtyProcesses(opts?: {
         timeoutMs:
           opts?.deadlineMs === undefined ? undefined : Math.max(1, opts.deadlineMs - Date.now())
       })
-      let index = 0
-      for (const id of ids) {
-        if (ptyWslShellAnchors.has(id)) {
-          identityByPty.set(id, results[index++]!)
+      // Keep the pre-read id/order association. A pane can exit while the batch
+      // is in flight; filtering anchors against live state here would shift all
+      // subsequent results onto the wrong pane.
+      for (const [index, id] of ids.entries()) {
+        const result = results[index]
+        if (result) {
+          identityByPty.set(id, result)
         }
       }
     })

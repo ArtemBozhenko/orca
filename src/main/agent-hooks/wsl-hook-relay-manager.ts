@@ -34,6 +34,7 @@ import {
 } from '../codex/managed-wsl-codex-home-registry'
 
 type DistroState = WslRelayState
+type EnsureOptions = { skipGuestInstall?: boolean }
 
 export function getWslRelayIdentityRpcCount(): number {
   return wslRelayIdentityRpcCount
@@ -98,7 +99,8 @@ export class WslHookRelayManager {
 
   private ensureForDistroAsync(
     distro: string | null,
-    codexHomePath?: string | null
+    codexHomePath?: string | null,
+    options: EnsureOptions = {}
   ): Promise<void> {
     if (
       this.disposed ||
@@ -116,12 +118,14 @@ export class WslHookRelayManager {
       distro === null
         ? this.deps.listDistros().then((distros) =>
             Promise.all(
-              distros.map((candidate) => this.ensureForDistroAsync(candidate, codexHomePath))
+              distros.map((candidate) =>
+                this.ensureForDistroAsync(candidate, codexHomePath, options)
+              )
             ).then(() => {
               this.defaultDistro ||= distros[0] ?? null
             })
           )
-        : this.ensureInternal(distro, codexHomePath ?? undefined)
+        : this.ensureInternal(distro, codexHomePath ?? undefined, options)
     )
       .catch((err) => {
         const detail = err instanceof Error ? err.message : String(err)
@@ -157,7 +161,9 @@ export class WslHookRelayManager {
       distro,
       anchors,
       deps: this.deps,
-      ensure: (target) => this.ensureForDistroAsync(target),
+      // A process-identity read may need to start a missing relay, but must not
+      // turn every read into a hook/plugin reinstall on an already-running one.
+      ensure: (target) => this.ensureForDistroAsync(target, undefined, { skipGuestInstall: true }),
       getState: (target) => this.stateFor(target),
       disposed: this.disposed,
       requestOptions: options
@@ -176,7 +182,8 @@ export class WslHookRelayManager {
 
   private async ensureInternal(
     requestedDistro: string | null,
-    requestedCodexHomePath?: string
+    requestedCodexHomePath?: string,
+    options: EnsureOptions = {}
   ): Promise<void> {
     const distro =
       requestedDistro ??
@@ -201,7 +208,9 @@ export class WslHookRelayManager {
         existing.lastInstallAt = 0
       }
       if (existing.phase === 'running') {
-        void maybeRerunWslRelayGuestInstall(this.deps, existing)
+        if (!options.skipGuestInstall) {
+          void maybeRerunWslRelayGuestInstall(this.deps, existing)
+        }
         return
       }
       if (existing.phase !== 'failed' || Date.now() < existing.cooldownUntil) {

@@ -77,12 +77,19 @@ function readStat(pid: number): { row: Omit<WslGuestProcessRow, 'command' | 'tty
   if (![ppid, pgid, sid, ttyNr, tpgid, startTimeTicks].every(Number.isSafeInteger)) {
     throw new Error('malformed_stat')
   }
-  let tty = '?'
-  try {
-    const link = readlinkSync(`/proc/${pid}/fd/0`)
-    tty = link.startsWith('/dev/') ? link : '?'
-  } catch {
-    // A process can close stdin while its /proc row is still visible.
+  // /proc stat's tty_nr is the controlling terminal, unlike fd/0 which may be
+  // redirected or closed by a piped/elevated agent. Linux encodes pts majors as
+  // 136; retain fd/0 as a fallback for other terminal types.
+  const ttyMajor = (ttyNr >> 8) & 0xfff
+  const ttyMinor = (ttyNr & 0xff) | ((ttyNr >> 12) & 0xfff00)
+  let tty = ttyMajor === 136 && ttyMinor >= 0 ? `/dev/pts/${ttyMinor}` : '?'
+  if (tty === '?') {
+    try {
+      const link = readlinkSync(`/proc/${pid}/fd/0`)
+      tty = link.startsWith('/dev/') ? link : '?'
+    } catch {
+      // A process can close stdin while its /proc row is still visible.
+    }
   }
   return {
     tty,
@@ -125,6 +132,9 @@ function capture(distro: string): CachedCapture {
     const pid = Number(entry)
     try {
       const stat = readStat(pid)
+      if (stat.row.stat === 'Z') {
+        continue
+      }
       rows.push({ ...stat.row, tty: stat.tty, command: readCommand(pid) })
     } catch {
       // A vanished /proc row is expected during a busy capture; skip it.
