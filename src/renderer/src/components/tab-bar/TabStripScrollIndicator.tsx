@@ -1,4 +1,4 @@
-import React, { useCallback, useLayoutEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import {
   computeTabStripThumbLayout,
   type TabStripScrollMetrics,
@@ -7,13 +7,24 @@ import {
 
 const EMPTY_THUMB_LAYOUT: TabStripThumbLayout = { widthPx: 0, leftPx: 0 }
 
-export function TabStripScrollIndicator({
-  metrics
-}: {
+export type TabStripScrollIndicatorProps = {
   metrics: TabStripScrollMetrics
-}): React.JSX.Element | null {
+  scrollContainerRef?: React.RefObject<HTMLElement | null>
+  disabled?: boolean
+}
+
+export function TabStripScrollIndicator({
+  metrics,
+  scrollContainerRef,
+  disabled = false
+}: TabStripScrollIndicatorProps): React.JSX.Element | null {
   const trackRef = useRef<HTMLDivElement>(null)
+  const cleanupDragRef = useRef<(() => void) | null>(null)
   const [thumbLayout, setThumbLayout] = useState<TabStripThumbLayout>(EMPTY_THUMB_LAYOUT)
+  const [isHovered, setIsHovered] = useState(false)
+  const [isDragging, setIsDragging] = useState(false)
+  const [isScrolling, setIsScrolling] = useState(false)
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const remeasureThumb = useCallback((): void => {
     const track = trackRef.current
@@ -37,23 +48,176 @@ export function TabStripScrollIndicator({
     return () => resizeObserver.disconnect()
   }, [remeasureThumb])
 
+  useEffect(() => {
+    const scrollContainer = scrollContainerRef?.current
+    if (!scrollContainer) {
+      return
+    }
+    const handleScroll = (): void => {
+      setIsScrolling(true)
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current)
+      }
+      scrollTimeoutRef.current = setTimeout(() => {
+        setIsScrolling(false)
+      }, 800)
+    }
+    scrollContainer.addEventListener('scroll', handleScroll, { passive: true })
+    return () => {
+      scrollContainer.removeEventListener('scroll', handleScroll)
+      if (scrollTimeoutRef.current) {
+        clearTimeout(scrollTimeoutRef.current)
+      }
+    }
+  }, [scrollContainerRef])
+
+  useEffect(() => {
+    return () => {
+      cleanupDragRef.current?.()
+    }
+  }, [])
+
+  const handleThumbPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0 || disabled) {
+      return
+    }
+    e.preventDefault()
+    e.stopPropagation()
+
+    const scrollContainer = scrollContainerRef?.current
+    const track = trackRef.current
+    if (!scrollContainer || !track) {
+      return
+    }
+
+    const startX = e.clientX
+    const startScrollLeft = scrollContainer.scrollLeft
+    const trackWidth = track.clientWidth
+    const maxLeft = Math.max(1, trackWidth - thumbLayout.widthPx)
+    const maxScrollLeft = Math.max(0, scrollContainer.scrollWidth - scrollContainer.clientWidth)
+
+    if (maxScrollLeft <= 0 || maxLeft <= 0) {
+      return
+    }
+
+    setIsDragging(true)
+    const prevUserSelect = document.body.style.userSelect
+    const prevCursor = document.body.style.cursor
+    document.body.style.userSelect = 'none'
+    document.body.style.cursor = 'grabbing'
+
+    const onPointerMove = (moveEvent: PointerEvent): void => {
+      const deltaX = moveEvent.clientX - startX
+      const scrollDelta = (deltaX / maxLeft) * maxScrollLeft
+      scrollContainer.scrollLeft = Math.max(
+        0,
+        Math.min(maxScrollLeft, startScrollLeft + scrollDelta)
+      )
+    }
+
+    const cleanup = (): void => {
+      setIsDragging(false)
+      document.body.style.userSelect = prevUserSelect
+      document.body.style.cursor = prevCursor
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', cleanup)
+      window.removeEventListener('pointercancel', cleanup)
+      cleanupDragRef.current = null
+    }
+
+    cleanupDragRef.current = cleanup
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', cleanup)
+    window.addEventListener('pointercancel', cleanup)
+  }
+
+  const handleTrackPointerDown = (e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0 || disabled) {
+      return
+    }
+    if (e.target !== trackRef.current) {
+      return
+    }
+    e.preventDefault()
+    e.stopPropagation()
+
+    const scrollContainer = scrollContainerRef?.current
+    const track = trackRef.current
+    if (!scrollContainer || !track) {
+      return
+    }
+
+    const trackRect = track.getBoundingClientRect()
+    const clickX = e.clientX - trackRect.left
+    const trackWidth = track.clientWidth
+    const thumbWidth = thumbLayout.widthPx
+    const maxLeft = Math.max(1, trackWidth - thumbWidth)
+    const maxScrollLeft = Math.max(0, scrollContainer.scrollWidth - scrollContainer.clientWidth)
+
+    if (maxScrollLeft <= 0 || maxLeft <= 0) {
+      return
+    }
+
+    const targetThumbLeft = Math.max(0, Math.min(maxLeft, clickX - thumbWidth / 2))
+    const targetScrollLeft = (targetThumbLeft / maxLeft) * maxScrollLeft
+
+    scrollContainer.scrollTo({
+      left: targetScrollLeft,
+      behavior: 'smooth'
+    })
+  }
+
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>): void => {
+    const scrollContainer = scrollContainerRef?.current
+    if (!scrollContainer) {
+      return
+    }
+    // Why: forward wheel events to tab container so scrolling over the indicator scrolls the strip.
+    const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY
+    scrollContainer.scrollLeft += delta
+  }
+
   if (!metrics.hasOverflow) {
     return null
   }
 
+  const isExpanded = isHovered || isDragging
+  const isVisible = isHovered || isDragging || isScrolling
+
   return (
-    // Why: top rail keeps the active tab's bottom underline unobstructed.
+    // Why: under-tab position matches editor tab scrollbar conventions, auto-hiding when idle so it never mimics an underline.
     <div
       ref={trackRef}
-      className="pointer-events-none absolute inset-x-0 top-0 z-[1] h-px bg-muted-foreground/10"
+      data-testid="tab-strip-scroll-indicator"
+      className={`absolute inset-x-0 bottom-0 z-[12] select-none transition-[height,background-color,opacity] duration-150 ease-out ${
+        isExpanded
+          ? 'h-[5px] bg-muted-foreground/15 cursor-pointer'
+          : 'h-[3px] bg-foreground/[0.04]'
+      } ${
+        isVisible
+          ? 'opacity-100 pointer-events-auto'
+          : 'opacity-0 group-hover/tab-strip:opacity-100 pointer-events-none group-hover/tab-strip:pointer-events-auto'
+      } ${disabled ? 'pointer-events-none' : ''}`}
+      onPointerEnter={() => setIsHovered(true)}
+      onPointerLeave={() => setIsHovered(false)}
+      onPointerDown={handleTrackPointerDown}
+      onWheel={handleWheel}
       aria-hidden
     >
       <div
-        className="absolute top-0 h-full rounded-full bg-muted-foreground/40 transition-[left,width] duration-75 ease-out"
+        data-testid="tab-strip-scroll-thumb"
+        className={`absolute bottom-0 h-full rounded-full transition-colors duration-150 ease-out ${
+          isDragging
+            ? 'bg-[color-mix(in_srgb,var(--foreground)_85%,transparent)] cursor-grabbing'
+            : isHovered
+              ? 'bg-[color-mix(in_srgb,var(--foreground)_65%,transparent)] cursor-grab'
+              : 'bg-[color-mix(in_srgb,var(--foreground)_45%,transparent)] cursor-default'
+        }`}
         style={{
           width: `${thumbLayout.widthPx}px`,
           left: `${thumbLayout.leftPx}px`
         }}
+        onPointerDown={handleThumbPointerDown}
       />
     </div>
   )
