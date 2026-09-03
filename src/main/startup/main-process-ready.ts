@@ -12,6 +12,11 @@ export async function initializeMainProcessReady(
 ): Promise<void> {
   await initializeReadyFoundation()
   await initializeReadyRuntimeServices()
-  await initializeMainProcessI18nAndMenu()
-  await initializeMainProcessRuntimeLaunch(options)
+  // Why concurrent: window creation reads no translated string and no menu item, and both the
+  // native menu and the tray only become reachable once the window shows — so serializing them
+  // ahead of openMainWindow only delayed the renderer (8 ms in English, more for a lazy locale).
+  await Promise.all([
+    initializeMainProcessI18nAndMenu(),
+    initializeMainProcessRuntimeLaunch(options)
+  ])
 }

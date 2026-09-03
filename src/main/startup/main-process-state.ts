@@ -100,6 +100,9 @@ export const mainProcessState = {
   // Electron with no error. Only the renderer's own pull proves the listener is live.
   markdownFileOpenListenerReady: false,
   firstWindowStartupServicesReady: Promise.resolve(),
+  // Why published: the default-session proxy must be applied before the first app-owned fetcher,
+  // but window creation has no reason to queue behind it (the request guard already fences it).
+  initialProxyApplicationReady: Promise.resolve(),
   managedWslCliReconciliationReady: Promise.resolve(),
   managedWslCliStartupBarrierReady: Promise.resolve(),
   // Why: the serve barrier fails open, so this state tells headless clients a WSL PTY launch may still race an un-migrated registration ('settled' = off-Windows no-op).
