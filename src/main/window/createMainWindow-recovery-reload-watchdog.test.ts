@@ -60,7 +60,19 @@ describe('renderer recovery reload watchdog', () => {
   })
 
   const createHarness = () => {
+    // Why fan-out: dom-ready and did-finish-load have several real registrants on this one webContents, so
+    // last-writer-wins would silently drop the watchdog's listener if registration order ever changed.
+    const registered: Record<string, ((...args: any[]) => void)[]> = {}
     const windowHandlers: Record<string, (...args: any[]) => void> = {}
+    const register = (event: string, handler: (...args: any[]) => void): void => {
+      const handlers = (registered[event] ??= [])
+      handlers.push(handler)
+      windowHandlers[event] ??= (...args: any[]) => {
+        for (const listener of handlers.slice()) {
+          listener(...args)
+        }
+      }
+    }
     // Loads stay pending unless a test settles one: that is exactly the stall being reproduced.
     const settleLoad: { resolve: () => void; reject: (error: Error) => void }[] = []
     const pendingLoad = (): Promise<void> =>
@@ -69,9 +81,7 @@ describe('renderer recovery reload watchdog', () => {
       id: 143,
       getURL: vi.fn(() => DOCUMENT_URL),
       isDestroyed: vi.fn(() => false),
-      on: vi.fn((event, handler) => {
-        windowHandlers[event] = handler
-      }),
+      on: vi.fn(register),
       setZoomLevel: vi.fn(),
       setBackgroundThrottling: vi.fn(),
       invalidate: vi.fn(),
@@ -80,9 +90,7 @@ describe('renderer recovery reload watchdog', () => {
     }
     const browserWindowInstance = {
       webContents,
-      on: vi.fn((event, handler) => {
-        windowHandlers[event] = handler
-      }),
+      on: vi.fn(register),
       isDestroyed: vi.fn(() => false),
       isMaximized: vi.fn(() => true),
       isFullScreen: vi.fn(() => false),
@@ -90,6 +98,7 @@ describe('renderer recovery reload watchdog', () => {
       setSize: vi.fn(),
       maximize: vi.fn(),
       show: vi.fn(),
+      setWindowButtonPosition: vi.fn(),
       loadFile: vi.fn(pendingLoad),
       loadURL: vi.fn(pendingLoad)
     }

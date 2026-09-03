@@ -178,8 +178,8 @@ export function createRendererRecoveryReloadWatchdog(args: {
     if (inFlight !== reload) {
       return
     }
-    // Why before any mutation: teardown is not a verdict. Disarming here would leave a canceled close, or a
-    // logoff the process outlives, with an unwatched stall and a modal raised mid-shutdown.
+    // Why before any mutation: teardown is not a verdict, so no modal is raised mid-shutdown. inFlight survives
+    // the return, so a later resume or renderer death re-arms this attempt; nothing re-arms it here.
     if (
       isWindowClosing() ||
       opts?.getIsQuitting?.() ||
