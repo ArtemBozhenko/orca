@@ -6,6 +6,13 @@ import { randomBytes } from 'node:crypto'
 import { lstat, mkdir, readdir, rename, rmdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { removeHostTree } from './host-tree-removal'
+import {
+  isTrashSweepEntryDue,
+  nextTrashSweepFailure,
+  readTrashSweepFailures,
+  writeTrashSweepFailures,
+  type TrashSweepFailures
+} from './worktree-trash-sweep-backoff'
 import { isFolderRepo } from '../shared/repo-kind'
 import { computeWorkspaceRoot, getWorktreePathSettings } from './ipc/worktree-logic'
 import type { GlobalSettings } from '../shared/global-settings-types'
@@ -94,12 +101,14 @@ export function whenWorktreeTrashDeletionsSettled(): Promise<void> {
 
 /**
  * Delete trash entries left behind by a previous run (a crash or a kill during background deletion).
- * Only entries matching the generated name pattern inside a trash root are removed.
+ * Only entries matching the generated name pattern inside a trash root are removed. An entry whose
+ * removal keeps failing is deferred onto a backoff rather than re-walked on every single launch.
  */
 export async function sweepStaleWorktreeTrash(
   workspaceRoots: readonly string[]
-): Promise<{ removed: number }> {
+): Promise<{ removed: number; deferred: number }> {
   let removed = 0
+  let deferred = 0
   for (const trashRoot of await collectExistingTrashRoots(workspaceRoots)) {
     let entries: string[]
     try {
@@ -111,25 +120,63 @@ export async function sweepStaleWorktreeTrash(
     } catch {
       continue
     }
+    const failures = await readTrashSweepFailures(trashRoot)
+    // Records for entries that are gone (removed here, or restored) must not accumulate forever.
+    let changed = pruneFailuresForMissingEntries(failures, entries)
     for (const entry of entries) {
       if (!isWorktreeTrashEntryName(entry)) {
+        continue
+      }
+      const failure = failures.get(entry)
+      if (!isTrashSweepEntryDue(failure, Date.now())) {
+        deferred += 1
         continue
       }
       try {
         await removeHostTree(join(trashRoot, entry))
         removed += 1
+        changed = failures.delete(entry) || changed
       } catch (error) {
+        failures.set(entry, nextTrashSweepFailure(failure, Date.now()))
+        // Flush now: a sweep over many failing entries is long, and a quit mid-way must not throw
+        // away the backoff that was just earned.
+        await writeTrashSweepFailures(trashRoot, failures)
+        changed = false
         console.warn(
           `[worktrees] Failed to sweep leftover worktree at ${trashRoot}/${entry}`,
           error
         )
       }
     }
+    if (changed) {
+      await writeTrashSweepFailures(trashRoot, failures)
+    }
   }
   if (removed > 0) {
     console.log(`[worktrees] Swept ${removed} leftover worktree director(ies) from a previous run`)
   }
-  return { removed }
+  if (deferred > 0) {
+    console.log(`[worktrees] Deferred ${deferred} leftover worktree director(ies) still in use`)
+  }
+  return { removed, deferred }
+}
+
+function pruneFailuresForMissingEntries(
+  failures: TrashSweepFailures,
+  entries: readonly string[]
+): boolean {
+  if (failures.size === 0) {
+    return false
+  }
+  const present = new Set(entries)
+  let pruned = false
+  for (const entry of failures.keys()) {
+    if (!present.has(entry)) {
+      failures.delete(entry)
+      pruned = true
+    }
+  }
+  return pruned
 }
 
 /** Trash roots live beside worktrees, so they sit at the workspace root (flat) or one level in (nested). */

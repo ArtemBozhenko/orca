@@ -159,9 +159,27 @@ describe('local worktree filesystem runtime access', () => {
     })
   })
 
-  it('does not retry host removal failures outside Windows', async () => {
+  // Why not Windows-only: Spotlight/`mds`, a scanner, or a live process writing under the tree race
+  // a POSIX removal the same way, and a one-shot rm left the worktree on disk for good.
+  it('retries transient host removal failures outside Windows too', async () => {
+    vi.useFakeTimers()
     await withPlatform('linux', async () => {
       const error = Object.assign(new Error('Directory not empty'), { code: 'ENOTEMPTY' })
+      rmMock.mockRejectedValueOnce(error).mockResolvedValueOnce(undefined)
+
+      const removal = removeLocalWorktreePath('/repo/feature')
+      await vi.advanceTimersByTimeAsync(250)
+
+      await expect(removal).resolves.toBeUndefined()
+      expect(rmMock).toHaveBeenCalledTimes(2)
+      // The retry may only change how many times the SAME path is attempted.
+      expect(new Set(rmMock.mock.calls.map((call) => call[0]))).toEqual(new Set(['/repo/feature']))
+    })
+  })
+
+  it('does not retry a non-transient host removal failure outside Windows', async () => {
+    await withPlatform('linux', async () => {
+      const error = Object.assign(new Error('I/O error'), { code: 'EIO' })
       rmMock.mockRejectedValue(error)
 
       await expect(removeLocalWorktreePath('/repo/feature')).rejects.toBe(error)

@@ -47,8 +47,10 @@ describe('transient lock removal options', () => {
     rmSyncMock.mockReset()
   })
 
-  it('retries on Windows, where a late handle release is the whole problem', () => {
-    withPlatform('win32')
+  // Why every platform: Windows is the acute case, but Spotlight/`mds`, a scanner or a live process
+  // writing under the tree race a POSIX removal the same way, and a one-shot rm never converged.
+  it.each(['win32', 'darwin', 'linux'] as const)('retries on %s', (platform) => {
+    withPlatform(platform)
 
     expect(transientLockRemovalOptions()).toEqual({
       recursive: true,
@@ -62,12 +64,28 @@ describe('transient lock removal options', () => {
     expect(WINDOWS_RM_MAX_RETRIES).toBe(8)
   })
 
-  it('asks for no retries where removal is not raced by the OS', () => {
-    for (const platform of ['darwin', 'linux'] as const) {
-      withPlatform(platform)
-      expect(transientLockRemovalOptions()).toEqual({ recursive: true, force: true })
-      Object.defineProperty(process, 'platform', { configurable: true, value: originalPlatform })
-    }
+  it('retries a transient ENOTEMPTY off Windows too', () => {
+    withPlatform('darwin')
+    rmSyncMock.mockImplementationOnce(() => {
+      throw Object.assign(new Error('ENOTEMPTY: directory not empty'), { code: 'ENOTEMPTY' })
+    })
+    rmSyncMock.mockImplementationOnce(() => undefined)
+
+    expect(() => removeTreeSync('/tmp/orca-host-job')).not.toThrow()
+    expect(rmSyncMock).toHaveBeenCalledTimes(2)
+    expect(new Set(rmSyncMock.mock.calls.map((call) => call[0]))).toEqual(
+      new Set(['/tmp/orca-host-job'])
+    )
+  })
+
+  it('does not read a POSIX failure out of its prose, only its code', () => {
+    withPlatform('linux')
+    rmSyncMock.mockImplementation(() => {
+      throw new Error('operation not permitted')
+    })
+
+    expect(() => removeTreeSync('/tmp/orca-host-job')).toThrow('operation not permitted')
+    expect(rmSyncMock).toHaveBeenCalledTimes(1)
   })
 
   it('retries a transient EPERM instead of treating force: true as enough', () => {

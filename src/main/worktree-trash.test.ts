@@ -141,14 +141,17 @@ describe('sweepStaleWorktreeTrash', () => {
   })
 
   it('ignores workspace roots that do not exist', async () => {
-    expect(await sweepStaleWorktreeTrash([join(scratchDir, 'missing')])).toEqual({ removed: 0 })
+    expect(await sweepStaleWorktreeTrash([join(scratchDir, 'missing')])).toEqual({
+      removed: 0,
+      deferred: 0
+    })
   })
 
   it('never descends past the trash roots beside worktrees', async () => {
     const deepTrashRoot = join(scratchDir, 'repo', 'feature', WORKTREE_TRASH_DIR_NAME)
     await mkdir(join(deepTrashRoot, 'wt-1700000000002-abcdef03'), { recursive: true })
 
-    expect(await sweepStaleWorktreeTrash([scratchDir])).toEqual({ removed: 0 })
+    expect(await sweepStaleWorktreeTrash([scratchDir])).toEqual({ removed: 0, deferred: 0 })
     expect(existsSync(join(deepTrashRoot, 'wt-1700000000002-abcdef03'))).toBe(true)
   })
 
@@ -159,7 +162,7 @@ describe('sweepStaleWorktreeTrash', () => {
       await mkdir(externalEntry, { recursive: true })
       await symlink(join(scratchDir, 'external'), join(scratchDir, WORKTREE_TRASH_DIR_NAME))
 
-      expect(await sweepStaleWorktreeTrash([scratchDir])).toEqual({ removed: 0 })
+      expect(await sweepStaleWorktreeTrash([scratchDir])).toEqual({ removed: 0, deferred: 0 })
       expect(existsSync(externalEntry)).toBe(true)
     }
   )
