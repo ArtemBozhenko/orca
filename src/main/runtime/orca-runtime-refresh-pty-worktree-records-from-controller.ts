@@ -10,6 +10,36 @@ export class OrcaRuntimeWithRefreshPtyWorktreeRecordsFromController extends Orca
     deadline?: number,
     signal?: AbortSignal
   ): Promise<Set<string> | null> {
+    const refreshKey = targetWorktreeId === null ? 'aggregate' : `target:${targetWorktreeId}`
+    const pending = this.ptyLivenessRefreshPromises.get(refreshKey)
+    if (pending) {
+      return pending
+    }
+    const invalidationSequence = this.ptyLivenessInvalidationSequence
+    const refresh = this.refreshPtyWorktreeRecordsFromControllerUncoalesced(
+      resolvedWorktrees,
+      targetWorktreeId,
+      deadline,
+      signal,
+      invalidationSequence
+    )
+    this.ptyLivenessRefreshPromises.set(refreshKey, refresh)
+    try {
+      return await refresh
+    } finally {
+      if (this.ptyLivenessRefreshPromises.get(refreshKey) === refresh) {
+        this.ptyLivenessRefreshPromises.delete(refreshKey)
+      }
+    }
+  }
+
+  private async refreshPtyWorktreeRecordsFromControllerUncoalesced(
+    resolvedWorktrees: ResolvedWorktree[],
+    targetWorktreeId: string | null,
+    deadline?: number,
+    signal?: AbortSignal,
+    invalidationSequence = this.ptyLivenessInvalidationSequence
+  ): Promise<Set<string> | null> {
     this.ptyLivenessRefreshInProgress += 1
     try {
       const inventory = await this.refreshPtyWorktreeRecordsWithControllerInventory(
@@ -20,7 +50,11 @@ export class OrcaRuntimeWithRefreshPtyWorktreeRecordsFromController extends Orca
         false,
         signal
       )
-      if (inventory) {
+      if (
+        inventory &&
+        targetWorktreeId === null &&
+        invalidationSequence === this.ptyLivenessInvalidationSequence
+      ) {
         this.ptyLivenessRefreshRequired = false
       }
       return inventory ? new Set(inventory.livePtyIds) : null

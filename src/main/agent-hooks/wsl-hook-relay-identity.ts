@@ -19,7 +19,7 @@ export async function readWslRelayProcessIdentity(options: {
   ensure: (distro: string) => Promise<void> | void
   getState: (distro: string) => { phase: string; mux?: SshChannelMultiplexer } | undefined
   disposed: boolean
-  requestOptions?: { signal?: AbortSignal; timeoutMs?: number }
+  requestOptions?: { signal?: AbortSignal; timeoutMs?: number; stableUntilReset?: boolean }
 }): Promise<WslRelayIdentityResult[]> {
   const unavailable = (reason: string): WslRelayIdentityResult[] =>
     options.anchors.map(() => ({ status: 'unverifiable' as const, reason, capturedAgeMs: 0 }))

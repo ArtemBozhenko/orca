@@ -122,6 +122,7 @@ import {
   ptyWslShellAnchors
 } from './local-pty-provider-state'
 import { wslRelayIdentityReader } from './wsl-relay-identity-reader'
+import { wslHookRelayManager } from '../agent-hooks/wsl-hook-relay-manager'
 import {
   applyLocalPtyProviderMockDefaults,
   createLocalPtyMockProcess,
@@ -248,6 +249,44 @@ describe('LocalPtyProvider', () => {
         expect(ptyProcesses.has(second.id)).toBe(true)
       } finally {
         readBatch.mockRestore()
+      }
+    })
+
+    it('coalesces repeated WSL list-process bursts until a PTY event resets identity', async () => {
+      Object.defineProperty(process, 'platform', { configurable: true, value: 'win32' })
+      const spawned = await provider.spawn({ cols: 80, rows: 24, cwd: '/tmp/wsl-owned-cwd' })
+      const anchor = {
+        distro: 'Ubuntu',
+        bootId: '11111111-1111-1111-1111-111111111111',
+        shellPid: 100,
+        shellStartTime: 1,
+        tty: '/dev/pts/1'
+      }
+      ptyWslDistroById.set(spawned.id, 'Ubuntu')
+      ptyWslShellAnchors.set(spawned.id, anchor)
+      wslRelayIdentityReader.reset()
+      const identityRequest = vi
+        .spyOn(wslHookRelayManager, 'readProcessIdentity')
+        .mockResolvedValue([
+          {
+            status: 'unverifiable' as const,
+            reason: 'relay_unavailable',
+            capturedAgeMs: 0
+          }
+        ])
+      try {
+        await Promise.all(Array.from({ length: 5 }, () => provider.listProcesses()))
+        expect(identityRequest).toHaveBeenCalledOnce()
+
+        await Promise.all(Array.from({ length: 5 }, () => provider.listProcesses()))
+        expect(identityRequest).toHaveBeenCalledOnce()
+
+        wslRelayIdentityReader.reset()
+        await provider.listProcesses()
+        expect(identityRequest).toHaveBeenCalledTimes(2)
+      } finally {
+        identityRequest.mockRestore()
+        clearPtyState(spawned.id)
       }
     })
   })

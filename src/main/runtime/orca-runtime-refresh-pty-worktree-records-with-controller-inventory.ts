@@ -211,17 +211,19 @@ export class OrcaRuntimeWithRefreshPtyWorktreeRecordsWithControllerInventory ext
       }
       this.restoredOrchestrationAuthorityByPtyId.delete(session.id)
       if (worktreeId) {
-        const pty = this.recordPtyWorktree(session.id, worktreeId, {
-          connected: true,
-          ...(session.incarnationId ? { incarnationId: session.incarnationId } : {}),
-          agentSessionOwners: session.incarnationId ? (session.agentSessionOwners ?? []) : [],
-          ...(session.wslDistro !== undefined
-            ? { isWsl: Boolean(session.wslDistro), wslDistro: session.wslDistro }
-            : {}),
-          ...(restoresExactSurface
-            ? { tabId: persistedSurface.tabId, paneKey: persistedSurface.paneKey }
-            : {})
-        })
+        const pty = this.withPtyLivenessRefreshBookkeeping(() =>
+          this.recordPtyWorktree(session.id, worktreeId, {
+            connected: true,
+            ...(session.incarnationId ? { incarnationId: session.incarnationId } : {}),
+            agentSessionOwners: session.incarnationId ? (session.agentSessionOwners ?? []) : [],
+            ...(session.wslDistro !== undefined
+              ? { isWsl: Boolean(session.wslDistro), wslDistro: session.wslDistro }
+              : {}),
+            ...(restoresExactSurface
+              ? { tabId: persistedSurface.tabId, paneKey: persistedSurface.paneKey }
+              : {})
+          })
+        )
         if (restoresExactSurface && controllerIdentity) {
           this.rememberRestoredOrchestrationAuthority(
             pty,

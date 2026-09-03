@@ -18,8 +18,11 @@ import {
 import {
   getWslRelayIdentityRpcCount,
   resetWslRelayIdentityRpcCount,
+  getWslRelayGuestHookInstallCount,
+  resetWslRelayGuestHookInstallCount,
   WslHookRelayManager
 } from './wsl-hook-relay-manager'
+import { getAgentHookRemotePostCount, resetAgentHookRemotePostCount } from './server'
 import { FAILURE_COOLDOWN_BASE_MS, type WslHookRelayManagerDeps } from './wsl-hook-relay-deps'
 import {
   AGENT_HOOK_INSTALL_PLUGINS_METHOD,
@@ -450,6 +453,8 @@ describe('WslHookRelayManager', () => {
 
   it('serves identity reads through connectWslRelayState with hooks disabled', async () => {
     resetWslRelayIdentityRpcCount()
+    resetWslRelayGuestHookInstallCount()
+    resetAgentHookRemotePostCount()
     const waitForSentinel = vi.fn(async () => {
       const transport = guestTransport()
       const guest = harnesses.at(-1)!.guestDispatcher
@@ -482,6 +487,8 @@ describe('WslHookRelayManager', () => {
       { status: 'live', processName: 'claude' }
     ])
     expect(getWslRelayIdentityRpcCount()).toBe(1)
+    expect(getWslRelayGuestHookInstallCount()).toBe(0)
+    expect(getAgentHookRemotePostCount()).toBe(0)
     expect(deps.installHooks).not.toHaveBeenCalled()
     manager.disposeAll()
   })

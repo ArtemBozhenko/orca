@@ -71,6 +71,7 @@ export abstract class DaemonPtySessionInventory extends DaemonPtyProcessInspecti
               sessions.map((session) => session.wslShellAnchor!),
               {
                 signal: opts?.signal,
+                stableUntilReset: true,
                 timeoutMs:
                   opts?.deadlineMs === undefined
                     ? undefined

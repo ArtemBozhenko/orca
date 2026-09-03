@@ -148,6 +148,9 @@ export async function listLocalPtyProcesses(opts?: {
         .filter((anchor): anchor is NonNullable<typeof anchor> => anchor !== undefined)
       const results = await wslRelayIdentityReader.readBatch(distro, anchors, {
         signal: opts?.signal,
+        // A process inventory is reused until a local PTY event resets the
+        // reader; polling itself is not evidence that guest state changed.
+        stableUntilReset: true,
         timeoutMs:
           opts?.deadlineMs === undefined ? undefined : Math.max(1, opts.deadlineMs - Date.now())
       })

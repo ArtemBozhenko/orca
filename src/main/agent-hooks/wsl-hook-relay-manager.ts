@@ -25,6 +25,10 @@ import {
 } from './wsl-hook-relay-identity'
 import { wslHookRelayStateKey } from './wsl-hook-relay-state-key'
 import {
+  getWslRelayGuestHookInstallCount,
+  resetWslRelayGuestHookInstallCount
+} from './wsl-hook-relay-guest-install'
+import {
   sanitizeWslHookInstanceKey,
   WSL_RELAY_HOOKS_SET_ENABLED_METHOD
 } from '../../shared/wsl-hook-relay-contract'
@@ -43,6 +47,8 @@ export function getWslRelayIdentityRpcCount(): number {
 export function resetWslRelayIdentityRpcCount(): void {
   resetIdentityCounter()
 }
+
+export { getWslRelayGuestHookInstallCount, resetWslRelayGuestHookInstallCount }
 
 export class WslHookRelayManager {
   private deps: WslHookRelayManagerDeps
@@ -155,7 +161,7 @@ export class WslHookRelayManager {
   readProcessIdentity = (
     distro: string,
     anchors: Parameters<typeof readWslRelayProcessIdentity>[0]['anchors'],
-    options?: { signal?: AbortSignal; timeoutMs?: number }
+    options?: { signal?: AbortSignal; timeoutMs?: number; stableUntilReset?: boolean }
   ) =>
     readWslRelayProcessIdentity({
       distro,

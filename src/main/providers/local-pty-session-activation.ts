@@ -41,6 +41,7 @@ import {
   type ShellStartupIdentityScanState
 } from '../shell-startup-identity-scanner'
 import type { PtySpawnOptions, PtySpawnResult } from './types'
+import { wslRelayIdentityReader } from './wsl-relay-identity-reader'
 
 export function activateLocalPtySession(args: {
   id: string
@@ -55,6 +56,8 @@ export function activateLocalPtySession(args: {
 }): PtySpawnResult {
   const { id, incarnationId, spawn, getOptions, plan, env, proc, spawnedWslDistro } = args
   createPtyPhysicalExit(id)
+  // A newly created PTY can introduce a fresh WSL shell identity.
+  wslRelayIdentityReader.reset()
   ptyReportsChildExitStatus.set(id, args.reportsChildExitStatus)
   ptyProcesses.set(id, proc)
   ptyInitialCwd.set(id, plan.cwd)
@@ -78,13 +81,20 @@ export function activateLocalPtySession(args: {
   )
   ptyLoadGeneration.set(id, getLoadGeneration())
   ptyIncarnations.set(id, incarnationId)
+  // Foreground identity is event-invalidated: once output arrives, the next
+  // inventory may observe an agent transition instead of reusing the old read.
+  const resetWslIdentityCache = (): void => {
+    wslRelayIdentityReader.reset()
+  }
   getOptions().onSpawned?.(id, incarnationId)
 
   const emitIngressData = (emission: PtyIngressEmission): void => {
     const sequenceChars = emission.rawEndSeq - emission.rawStartSeq
     if (emission.transformed || sequenceChars !== emission.data.length) {
+      resetWslIdentityCache()
       getOptions().onData?.(id, emission.data, Date.now(), sequenceChars, true)
     } else {
+      resetWslIdentityCache()
       getOptions().onData?.(id, emission.data, Date.now())
     }
     for (const cb of dataListeners) {

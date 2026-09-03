@@ -31,6 +31,18 @@ type GuestInstallState = {
   lastInstallAt?: number
 }
 
+// Diagnostics seam for the hooks-off contract: relay residency must remain
+// live while no guest hook installation work is attempted.
+let wslRelayGuestHookInstallCount = 0
+
+export function getWslRelayGuestHookInstallCount(): number {
+  return wslRelayGuestHookInstallCount
+}
+
+export function resetWslRelayGuestHookInstallCount(): void {
+  wslRelayGuestHookInstallCount = 0
+}
+
 export async function runWslRelayGuestInstall(
   deps: GuestInstallDeps,
   state: GuestInstallState,
@@ -43,6 +55,7 @@ export async function runWslRelayGuestInstall(
   ) {
     return
   }
+  wslRelayGuestHookInstallCount++
   state.lastInstallAt = Date.now()
   await installWslGuestHooks({
     mux,
