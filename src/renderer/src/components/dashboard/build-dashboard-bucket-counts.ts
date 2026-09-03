@@ -30,6 +30,8 @@ type ActiveWorkspacesMemo = {
   folderWorkspaces: unknown
   projectGroups: unknown
   workspaces: ActiveDashboardWorkspace[]
+  /** Held alongside the descriptors so the orchestration batch keeps one array identity. */
+  worktreeIds: string[]
 }
 
 type WorktreeTallyMemo = {
@@ -57,17 +59,20 @@ export function createDashboardBucketCountsCache(): DashboardBucketCountsCache {
 }
 
 /**
- * The workspace descriptor list, reused by identity while its inputs hold.
+ * The workspace descriptor list and its worktree ids, reused by identity while the
+ * inputs hold.
  *
  * `collectActiveDashboardWorkspaces(state, false)` allocates one descriptor per
  * workspace (hundreds, in a large install) and, with metadata off, reads only the
  * four slices keyed here — see the read-set note on `DashboardWorkspaceState`.
- * Every other slice it can touch sits behind an `includeMapMetadata` gate.
+ * Every other slice it can touch sits behind an `includeMapMetadata` gate. The id
+ * array rides the same memo because the orchestration batch re-derives it on every
+ * agent-status write and only needs it to be stable, not fresh.
  */
 function selectActiveDashboardWorkspaces(
   state: DashboardWorkspaceState,
   cache: DashboardBucketCountsCache | undefined
-): ActiveDashboardWorkspace[] {
+): { workspaces: ActiveDashboardWorkspace[]; worktreeIds: string[] } {
   const memo = cache?.activeWorkspaces
   if (
     memo &&
@@ -76,19 +81,21 @@ function selectActiveDashboardWorkspaces(
     memo.folderWorkspaces === state.folderWorkspaces &&
     memo.projectGroups === state.projectGroups
   ) {
-    return memo.workspaces
+    return memo
   }
   const workspaces = collectActiveDashboardWorkspaces(state, false)
+  const worktreeIds = workspaces.map(({ worktree }) => worktree.id)
   if (cache) {
     cache.activeWorkspaces = {
       repos: state.repos,
       worktreesByRepo: state.worktreesByRepo,
       folderWorkspaces: state.folderWorkspaces,
       projectGroups: state.projectGroups,
-      workspaces
+      workspaces,
+      worktreeIds
     }
   }
-  return workspaces
+  return { workspaces, worktreeIds }
 }
 
 function countsEqual(
@@ -164,10 +171,11 @@ export function buildDashboardBucketCounts(
     done: 0,
     idle: 0
   } satisfies Record<DashboardBucket, number>
-  const activeWorktrees = selectActiveDashboardWorkspaces(state, cache)
+  const { workspaces: activeWorktrees, worktreeIds } = selectActiveDashboardWorkspaces(state, cache)
   const { singletonOrchestration, orchestrationByWorktree } = selectDashboardOrchestration(
     state,
-    activeWorktrees
+    activeWorktrees,
+    worktreeIds
   )
   if (cache) {
     startWorktreeAgentRowsCachePass(cache)

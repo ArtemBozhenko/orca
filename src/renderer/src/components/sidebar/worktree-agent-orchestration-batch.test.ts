@@ -7,7 +7,9 @@ import type {
 import { makePaneKey } from '../../../../shared/stable-pane-id'
 import type { TerminalTab } from '../../../../shared/terminal-tab-types'
 import {
+  _getRuntimeAgentOrchestrationBatchCountersForTest,
   EMPTY_WORKTREE_AGENT_ORCHESTRATION,
+  releaseRuntimeAgentOrchestrationBatchCache,
   selectRuntimeAgentOrchestrationBatch
 } from './worktree-agent-orchestration-batch'
 import { selectRuntimeAgentOrchestrationForWorktree } from './worktree-agent-row-selectors'
@@ -521,10 +523,12 @@ describe('selectRuntimeAgentOrchestrationBatch', () => {
         requested
       )
     }
+    // The batch reads nothing but each orchestrated pane's worktreeId out of the live
+    // map, so publications that leave those alone never revisit a context at all.
     expect(batched.counts()).toEqual({
       runtimeEnumerations: 1,
       runtimeValueReads: contextCount,
-      contextVisits: contextCount * (publicationCount + 1),
+      contextVisits: contextCount,
       tabIdReads: worktreeCount
     })
 
@@ -564,5 +568,123 @@ describe('selectRuntimeAgentOrchestrationBatch', () => {
       contextVisits: contextCount * (publicationCount + 1),
       tabIdReads: worktreeCount
     })
+  })
+})
+
+describe('selectRuntimeAgentOrchestrationBatch live-map churn', () => {
+  const ORCHESTRATED_CONTEXT = makeContext('orchestrated')
+  const SECOND_CONTEXT = makeContext('second')
+  const requested = ['wt-1', 'wt-2']
+  // Held by identity so only the live map churns, as it does under `agentStatus:set`.
+  const TABS_BY_WORKTREE = { 'wt-1': [makeTab('unrelated-tab')], 'wt-2': [] }
+  const RUNTIME_ONE = { [CHILD_KEY]: ORCHESTRATED_CONTEXT }
+  const RUNTIME_TWO = { [CHILD_KEY]: ORCHESTRATED_CONTEXT, [SECOND_CHILD_KEY]: SECOND_CONTEXT }
+  const RETAINED = {}
+
+  function makeChurnState(
+    agentStatusByPaneKey: Record<string, AgentStatusEntry>,
+    runtimeAgentOrchestrationByPaneKey: Record<
+      string,
+      AgentStatusOrchestrationContext
+    > = RUNTIME_ONE
+  ): BatchState {
+    return {
+      tabsByWorktree: TABS_BY_WORKTREE,
+      runtimeAgentOrchestrationByPaneKey,
+      agentStatusByPaneKey,
+      retainedAgentsByPaneKey: RETAINED
+    } as BatchState
+  }
+
+  function builds(): number {
+    return _getRuntimeAgentOrchestrationBatchCountersForTest().builds
+  }
+
+  it('rebuilds once across repeated agentStatus:set identity churn on unrelated panes', () => {
+    releaseRuntimeAgentOrchestrationBatchCache()
+    const first = selectRuntimeAgentOrchestrationBatch(
+      makeChurnState({ [CHILD_KEY]: makeEntry(CHILD_KEY, 'wt-1') }),
+      requested
+    )
+    const buildsAfterFirst = builds()
+
+    for (let index = 0; index < 25; index += 1) {
+      // A fresh live map on every tick, exactly as `agentStatus:set` replaces the slice.
+      const churned = selectRuntimeAgentOrchestrationBatch(
+        makeChurnState({
+          [CHILD_KEY]: makeEntry(CHILD_KEY, 'wt-1'),
+          [`unrelated-${index}`]: makeEntry(`unrelated-${index}`, 'wt-9')
+        }),
+        requested
+      )
+      expect(churned).toBe(first)
+    }
+    expect(builds()).toBe(buildsAfterFirst)
+    expect(getBatchRecord(first, 'wt-1')[CHILD_KEY]).toBe(ORCHESTRATED_CONTEXT)
+  })
+
+  it('rebuilds when an orchestrated pane changes worktree or the entry set changes', () => {
+    releaseRuntimeAgentOrchestrationBatchCache()
+    const first = selectRuntimeAgentOrchestrationBatch(
+      makeChurnState({ [CHILD_KEY]: makeEntry(CHILD_KEY, 'wt-1') }),
+      requested
+    )
+    expect(getBatchRecord(first, 'wt-1')[CHILD_KEY]).toBe(ORCHESTRATED_CONTEXT)
+    expect(first.has('wt-2')).toBe(false)
+
+    const movedBuilds = builds()
+    const moved = selectRuntimeAgentOrchestrationBatch(
+      makeChurnState({ [CHILD_KEY]: makeEntry(CHILD_KEY, 'wt-2') }),
+      requested
+    )
+    expect(builds()).toBe(movedBuilds + 1)
+    expect(moved).not.toBe(first)
+    expect(moved.has('wt-1')).toBe(false)
+    expect(getBatchRecord(moved, 'wt-2')[CHILD_KEY]).toBe(ORCHESTRATED_CONTEXT)
+
+    const addedBuilds = builds()
+    const added = selectRuntimeAgentOrchestrationBatch(
+      makeChurnState(
+        {
+          [CHILD_KEY]: makeEntry(CHILD_KEY, 'wt-2'),
+          [SECOND_CHILD_KEY]: makeEntry(SECOND_CHILD_KEY, 'wt-1')
+        },
+        RUNTIME_TWO
+      ),
+      requested
+    )
+    expect(builds()).toBe(addedBuilds + 1)
+    expect(Object.keys(getBatchRecord(added, 'wt-1'))).toEqual([SECOND_CHILD_KEY])
+
+    const removedBuilds = builds()
+    const removed = selectRuntimeAgentOrchestrationBatch(
+      makeChurnState({
+        [CHILD_KEY]: makeEntry(CHILD_KEY, 'wt-2'),
+        [SECOND_CHILD_KEY]: makeEntry(SECOND_CHILD_KEY, 'wt-1')
+      }),
+      requested
+    )
+    expect(builds()).toBe(removedBuilds + 1)
+    expect(removed.has('wt-1')).toBe(false)
+  })
+
+  it('does not re-derive the requested id list for an unchanged input identity', () => {
+    releaseRuntimeAgentOrchestrationBatchCache()
+    const stableIds = ['wt-1', 'wt-2']
+    selectRuntimeAgentOrchestrationBatch(
+      makeChurnState({ [CHILD_KEY]: makeEntry(CHILD_KEY, 'wt-1') }),
+      stableIds
+    )
+    const after = _getRuntimeAgentOrchestrationBatchCountersForTest().uniqueIdComputations
+    for (let index = 0; index < 25; index += 1) {
+      selectRuntimeAgentOrchestrationBatch(
+        makeChurnState({
+          [CHILD_KEY]: makeEntry(CHILD_KEY, 'wt-1'),
+          [`unrelated-${index}`]: makeEntry(`unrelated-${index}`, 'wt-9')
+        }),
+        stableIds
+      )
+    }
+    expect(_getRuntimeAgentOrchestrationBatchCountersForTest().uniqueIdComputations).toBe(after)
   })
 })

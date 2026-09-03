@@ -28,8 +28,8 @@ type RequestedTabMembershipCache = {
 type RuntimeBatchCache = {
   runtimeSource: RuntimeOrchestrationMap
   tabsSource: RuntimeOrchestrationState['tabsByWorktree']
-  liveSource: RuntimeOrchestrationState['agentStatusByPaneKey']
-  retainedSource: RuntimeOrchestrationState['retainedAgentsByPaneKey']
+  /** What the batch actually reads out of the live/retained maps; see projectPaneWorktreeIds. */
+  paneWorktreeIds: readonly (string | undefined)[]
   requestedWorktreeIds: string[]
   recordsByWorktree: ReadonlyMap<string, RuntimeOrchestrationRecord>
 }
@@ -51,11 +51,20 @@ function createRecord(): RuntimeOrchestrationRecord {
 let runtimeDomainCache: RuntimeDomainCache | null = null
 let requestedTabMembershipCache: RequestedTabMembershipCache | null = null
 let runtimeBatchCache: RuntimeBatchCache | null = null
+let runtimeBatchBuildCount = 0
+let uniqueWorktreeIdComputeCount = 0
 
 export function releaseRuntimeAgentOrchestrationBatchCache(): void {
   runtimeDomainCache = null
   requestedTabMembershipCache = null
   runtimeBatchCache = null
+}
+
+export function _getRuntimeAgentOrchestrationBatchCountersForTest(): {
+  builds: number
+  uniqueIdComputations: number
+} {
+  return { builds: runtimeBatchBuildCount, uniqueIdComputations: uniqueWorktreeIdComputeCount }
 }
 
 function getOrderedRuntimeEntries(
@@ -69,7 +78,17 @@ function getOrderedRuntimeEntries(
   return orderedEntries
 }
 
+// Why: the dashboard re-derives this list on every agent-status write. Keying on the caller's
+// array identity lets the snapshot path (fresh array per call) miss without evicting the
+// memoised sidebar path. Callers must not mutate an array they have already passed in.
+const uniqueWorktreeIdsByInput = new WeakMap<readonly string[], string[]>()
+
 function uniqueWorktreeIds(worktreeIds: readonly string[]): string[] {
+  const memoized = uniqueWorktreeIdsByInput.get(worktreeIds)
+  if (memoized) {
+    return memoized
+  }
+  uniqueWorktreeIdComputeCount += 1
   const uniqueIds: string[] = []
   const seen = new Set<string>()
   for (const worktreeId of worktreeIds) {
@@ -78,14 +97,39 @@ function uniqueWorktreeIds(worktreeIds: readonly string[]): string[] {
       uniqueIds.push(worktreeId)
     }
   }
+  uniqueWorktreeIdsByInput.set(worktreeIds, uniqueIds)
   return uniqueIds
 }
 
-function hasSameWorktreeIds(previous: readonly string[], next: readonly string[]): boolean {
+function hasSameOrderedValues(previous: readonly unknown[], next: readonly unknown[]): boolean {
+  if (previous === next) {
+    return true
+  }
   if (previous.length !== next.length) {
     return false
   }
-  return previous.every((worktreeId, index) => worktreeId === next[index])
+  return previous.every((value, index) => value === next[index])
+}
+
+/**
+ * The only thing `buildRuntimeBatch` reads out of the live and retained maps: the
+ * `worktreeId` each orchestrated pane key resolves to, in ordered-entry order. A
+ * status write for any other pane cannot change the batch, so this projection —
+ * not the map identities — is the correct cache key.
+ */
+function projectPaneWorktreeIds(
+  orderedRuntimeEntries: readonly [string, AgentStatusOrchestrationContext][],
+  agentStatusByPaneKey: RuntimeOrchestrationState['agentStatusByPaneKey'],
+  retainedAgentsByPaneKey: RuntimeOrchestrationState['retainedAgentsByPaneKey']
+): (string | undefined)[] {
+  const paneWorktreeIds: (string | undefined)[] = []
+  for (const [paneKey] of orderedRuntimeEntries) {
+    paneWorktreeIds.push(
+      agentStatusByPaneKey[paneKey]?.worktreeId,
+      retainedAgentsByPaneKey[paneKey]?.worktreeId
+    )
+  }
+  return paneWorktreeIds
 }
 
 function getRequestedTabMembership(
@@ -94,7 +138,7 @@ function getRequestedTabMembership(
 ): RequestedTabMembershipCache {
   if (
     requestedTabMembershipCache?.tabsSource === tabsByWorktree &&
-    hasSameWorktreeIds(requestedTabMembershipCache.requestedWorktreeIds, requestedWorktreeIds)
+    hasSameOrderedValues(requestedTabMembershipCache.requestedWorktreeIds, requestedWorktreeIds)
   ) {
     return requestedTabMembershipCache
   }
@@ -152,6 +196,7 @@ function buildRuntimeBatch(
   agentStatusByPaneKey: RuntimeOrchestrationState['agentStatusByPaneKey'],
   retainedAgentsByPaneKey: RuntimeOrchestrationState['retainedAgentsByPaneKey']
 ): ReadonlyMap<string, RuntimeOrchestrationRecord> {
+  runtimeBatchBuildCount += 1
   const { requestedIds, worktreeIdsByTabId } = getRequestedTabMembership(
     tabsByWorktree,
     requestedWorktreeIds
@@ -227,12 +272,16 @@ export function selectRuntimeAgentOrchestrationBatch(
   const tabsByWorktree = state.tabsByWorktree ?? EMPTY_TABS_BY_WORKTREE
   const agentStatusByPaneKey = state.agentStatusByPaneKey ?? EMPTY_AGENT_STATUS
   const retainedAgentsByPaneKey = state.retainedAgentsByPaneKey ?? EMPTY_RETAINED_AGENTS
+  const paneWorktreeIds = projectPaneWorktreeIds(
+    orderedRuntimeEntries,
+    agentStatusByPaneKey,
+    retainedAgentsByPaneKey
+  )
   if (
     runtimeBatchCache?.runtimeSource === runtimeAgentOrchestrationByPaneKey &&
     runtimeBatchCache.tabsSource === tabsByWorktree &&
-    runtimeBatchCache.liveSource === agentStatusByPaneKey &&
-    runtimeBatchCache.retainedSource === retainedAgentsByPaneKey &&
-    hasSameWorktreeIds(runtimeBatchCache.requestedWorktreeIds, requestedWorktreeIds)
+    hasSameOrderedValues(runtimeBatchCache.paneWorktreeIds, paneWorktreeIds) &&
+    hasSameOrderedValues(runtimeBatchCache.requestedWorktreeIds, requestedWorktreeIds)
   ) {
     return runtimeBatchCache.recordsByWorktree
   }
@@ -240,8 +289,7 @@ export function selectRuntimeAgentOrchestrationBatch(
   runtimeBatchCache = {
     runtimeSource: runtimeAgentOrchestrationByPaneKey,
     tabsSource: tabsByWorktree,
-    liveSource: agentStatusByPaneKey,
-    retainedSource: retainedAgentsByPaneKey,
+    paneWorktreeIds,
     requestedWorktreeIds,
     recordsByWorktree: buildRuntimeBatch(
       requestedWorktreeIds,

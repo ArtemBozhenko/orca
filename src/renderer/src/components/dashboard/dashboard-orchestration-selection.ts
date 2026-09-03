@@ -9,7 +9,9 @@ import { selectRuntimeAgentOrchestrationForWorktree } from '../sidebar/worktree-
 /** Select the singleton or batched orchestration view for active workspaces. */
 export function selectDashboardOrchestration(
   state: DashboardSnapshotState,
-  activeWorkspaces: readonly Pick<ActiveDashboardWorkspace, 'worktree'>[]
+  activeWorkspaces: readonly Pick<ActiveDashboardWorkspace, 'worktree'>[],
+  /** Pre-derived ids from the caller's memo; the batch caches on this array's identity. */
+  activeWorktreeIds?: readonly string[]
 ): {
   singletonOrchestration: ReturnType<typeof selectRuntimeAgentOrchestrationForWorktree> | null
   orchestrationByWorktree: ReturnType<typeof selectRuntimeAgentOrchestrationBatch> | null
@@ -21,7 +23,7 @@ export function selectDashboardOrchestration(
   if (activeWorkspaces.length >= 2) {
     orchestrationByWorktree = selectRuntimeAgentOrchestrationBatch(
       state,
-      activeWorkspaces.map(({ worktree }) => worktree.id)
+      activeWorktreeIds ?? activeWorkspaces.map(({ worktree }) => worktree.id)
     )
   } else {
     releaseRuntimeAgentOrchestrationBatchCache()
