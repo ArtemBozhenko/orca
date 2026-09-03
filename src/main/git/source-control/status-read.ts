@@ -18,7 +18,10 @@ import { findExistingWorktreeSymlinkPaths } from '../worktree-symlink-detection'
 import type { GetStatusOptions } from './get-status-options'
 import { statusReadLeaseOwner } from './git-read-cache-invalidation'
 import { detectConflictOperation } from './git-conflict-operation'
-import { parseUnmergedEntry } from '../../../shared/git-status-conflict-entries'
+import {
+  parseUnmergedEntry,
+  resolveUnmergedStatusRecords
+} from '../../../shared/git-status-conflict-entries'
 import { getEffectiveUpstreamStatusCacheKey } from './effective-upstream-status-cache'
 import {
   getShortBranchName,
@@ -176,16 +179,37 @@ async function runGetStatus(
   // Why: git runs in the distro and answers in its namespace; the working-tree probes below run here.
   const hostWorktreePath = resolveWorktreeHostPath(worktreePath, options) ?? worktreePath
 
+  // Why: a record only pushes one entry, so the cap can never break before index `limit`; prefetching
+  // exactly that prefix keeps the probe count identical to a serial read on a truncated status.
+  const resolvableUnmergedEnd = didHitLimit
+    ? Math.min(parser.statusRecords.length, limit)
+    : parser.statusRecords.length
+  // Why: skip the prefetch entirely for the conflict-free poll so the common path allocates nothing extra.
+  const resolvedUnmerged =
+    parser.unmergedLines.length > 0
+      ? await resolveUnmergedStatusRecords(
+          hostWorktreePath,
+          parser.statusRecords,
+          resolvableUnmergedEnd
+        )
+      : undefined
+
   // Why: resolve deferred conflicts in Git's output order so the cap cannot hide
   // an early conflict behind ordinary rows that appeared later in the stream.
-  for (const record of parser.statusRecords) {
+  for (const [index, record] of parser.statusRecords.entries()) {
     if (didHitLimit && entries.length >= limit) {
       break
     }
     if (record.type === 'entry') {
       entries.push(record.entry)
     } else {
-      const unmergedEntry = await parseUnmergedEntry(hostWorktreePath, record.line)
+      const prefetched = resolvedUnmerged?.[index]
+      if (prefetched?.ok === false) {
+        throw prefetched.error
+      }
+      const unmergedEntry = prefetched
+        ? prefetched.entry
+        : await parseUnmergedEntry(hostWorktreePath, record.line)
       if (unmergedEntry) {
         entries.push(unmergedEntry)
       }

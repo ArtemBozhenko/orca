@@ -1,7 +1,51 @@
 import { access } from 'node:fs/promises'
 import * as path from 'node:path'
 import type { GitConflictKind, GitFileStatus, GitStatusEntry } from './git-status-types'
+import type { StatusPorcelainRecord } from './git-status-porcelain-parser'
 import { decodeGitCQuotedPath } from './git-cquoted-path'
+
+const UNMERGED_ENTRY_RESOLVE_CONCURRENCY = 8
+
+/** A settled `parseUnmergedEntry` result, replayed at the record index it belongs to. */
+export type ResolvedUnmergedEntry =
+  | { ok: true; entry: GitStatusEntry | null }
+  | { ok: false; error: unknown }
+
+/**
+ * Resolve the deferred `u` records in `records[0, end)` with bounded concurrency, keyed by record
+ * index. Asymmetric conflict kinds each cost an `fs.access`, which is a 9p/network round trip on a
+ * WSL or remote worktree, and a big rebase makes hundreds of them — serialising those stalls every
+ * status poll for the life of the conflict.
+ *
+ * Ordering is untouched: results stay at their own index, so the caller still consumes Git's output
+ * order, and a rejection is replayed only if the caller actually reaches that record.
+ */
+export async function resolveUnmergedStatusRecords(
+  worktreePath: string,
+  records: readonly StatusPorcelainRecord[],
+  end: number
+): Promise<(ResolvedUnmergedEntry | undefined)[]> {
+  const resolved: (ResolvedUnmergedEntry | undefined)[] = []
+  let nextIndex = 0
+  const resolveNext = async (): Promise<void> => {
+    while (nextIndex < end) {
+      const index = nextIndex
+      nextIndex += 1
+      const record = records[index]
+      if (record?.type !== 'unmerged') {
+        continue
+      }
+      try {
+        resolved[index] = { ok: true, entry: await parseUnmergedEntry(worktreePath, record.line) }
+      } catch (error) {
+        resolved[index] = { ok: false, error }
+      }
+    }
+  }
+  const workerCount = Math.min(UNMERGED_ENTRY_RESOLVE_CONCURRENCY, end)
+  await Promise.all(Array.from({ length: workerCount }, () => resolveNext()))
+  return resolved
+}
 
 export async function parseUnmergedEntry(
   worktreePath: string,
