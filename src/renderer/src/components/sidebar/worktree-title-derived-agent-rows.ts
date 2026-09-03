@@ -22,6 +22,9 @@ import {
 } from '../../../../shared/agent-title-owner'
 import { resolvePaneAgentOwner } from '../../../../shared/pane-agent-owner'
 import { isClaudeIdentityFrameTitle } from '../../../../shared/terminal-title-agent-type'
+import { resolveCanonicalPaneAgentIdentity } from '../../../../shared/pane-agent-identity-adapter'
+import { resolveExplicitTerminalTitleAgentType } from '../../../../shared/terminal-title-agent-type'
+import type { TuiAgent } from '../../../../shared/tui-agent'
 
 /** Fixed, not per-process: title rows are a pure projection of the current title, so they are
  *  comparable across restarts in a way a sequenced authority's rows are not. Ordering against
@@ -93,6 +96,10 @@ export function buildTitleDerivedAgentRows(args: {
           leafId,
           title,
           ownerAgentType: resolveTitleDerivedPaneOwner(tab, layout, leafId),
+          launchAgent:
+            paneTitleEntries.length === 1 && layout?.root?.type !== 'split'
+              ? tab.launchAgent
+              : undefined,
           now: args.now,
           runtimeAgentOrchestrationByPaneKey: args.runtimeAgentOrchestrationByPaneKey
         })
@@ -114,6 +121,7 @@ export function buildTitleDerivedAgentRows(args: {
       leafId,
       title: tab.title,
       ownerAgentType: resolveTitleDerivedPaneOwner(tab, layout, leafId),
+      launchAgent: layout?.root?.type === 'leaf' ? tab.launchAgent : undefined,
       now: args.now,
       runtimeAgentOrchestrationByPaneKey: args.runtimeAgentOrchestrationByPaneKey
     })
@@ -136,6 +144,7 @@ function buildTitleDerivedAgentRow(args: {
   leafId: string
   title: string
   ownerAgentType: AgentType | null
+  launchAgent?: TuiAgent
   now: number
   runtimeAgentOrchestrationByPaneKey?: Record<string, AgentStatusOrchestrationContext>
 }): DashboardAgentRow | null {
@@ -164,15 +173,26 @@ function buildTitleDerivedAgentRow(args: {
   }
   const paneKey = makePaneKey(args.tab.id, args.leafId)
   const orchestration = args.runtimeAgentOrchestrationByPaneKey?.[paneKey]
-  const titleAgentType = isClaudeAgentsTitle
-    ? 'claude'
-    : resolveTitleDerivedAgentType(title, label, args.ownerAgentType)
+  const canonicalIdentity = resolveCanonicalPaneAgentIdentity({
+    launchAgent: args.launchAgent ?? null,
+    title,
+    uncoveredFallback: { agent: resolveExplicitTerminalTitleAgentType(title), titleOnly: true }
+  })
+  const titleAgentType =
+    canonicalIdentity.source === 'title'
+      ? (canonicalIdentity.agent as AgentType | null)
+      : isClaudeAgentsTitle
+        ? 'claude'
+        : null
   // Why: a status frame proves activity, not identity, so the resolver drops it.
   // Hook-less agents over SSH (Codex, #8711; OpenCode's '. '/'* ' frames, #8940)
   // surface only decorated task titles; fall back to the pane's known owner instead
   // of hiding the pane. Safe because the `!status || !label` gate above already
   // rejects plain shell titles — this path must never manufacture a row from one.
-  const agentType = titleAgentType ?? args.ownerAgentType
+  const agentType =
+    (canonicalIdentity.agent as AgentType | null) ??
+    args.ownerAgentType ??
+    (isClaudeAgentsTitle ? 'claude' : null)
   if (!agentType) {
     return null
   }

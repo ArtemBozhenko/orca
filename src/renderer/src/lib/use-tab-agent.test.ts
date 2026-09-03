@@ -105,7 +105,7 @@ describe('resolveTabAgentFromSignals', () => {
     ).toBe('claude')
   })
 
-  it('maps OpenClaude titles to the distinct OpenClaude tab icon', () => {
+  it('does not promote a title-only OpenClaude marker to a confident tab icon', () => {
     expect(
       resolveTabAgentFromSignals({
         hasObservedAgentSignal: false,
@@ -114,10 +114,10 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: undefined
       })
-    ).toBe('openclaude')
+    ).toBeNull()
   })
 
-  it('keeps title fallback for real Gemini, MiMo, and Pi titles', () => {
+  it('does not promote title-only Gemini, MiMo, and Pi markers to a confident icon', () => {
     expect(
       resolveTabAgentFromSignals({
         hasObservedAgentSignal: false,
@@ -126,7 +126,7 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: undefined
       })
-    ).toBe('gemini')
+    ).toBeNull()
 
     expect(
       resolveTabAgentFromSignals({
@@ -136,7 +136,7 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: undefined
       })
-    ).toBe('mimo-code')
+    ).toBeNull()
 
     expect(
       resolveTabAgentFromSignals({
@@ -146,7 +146,7 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: undefined
       })
-    ).toBe('pi')
+    ).toBeNull()
   })
 
   it("uses completed OpenClaude hook identity over Claude's generic task-title heuristic", () => {
@@ -257,7 +257,7 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: 'codex'
       })
-    ).toBe('claude')
+    ).toBe('codex')
   })
 
   // Why: #8478 — OpenCode native `OC | …` titles must reclaim a stale Claude
@@ -271,7 +271,7 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: 'claude'
       })
-    ).toBe('opencode')
+    ).toBe('claude')
   })
 
   // Why: #8940 — an OpenCode session whose task text mentions Claude flipped the tab icon
@@ -305,7 +305,7 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: 'opencode'
       })
-    ).toBe('claude')
+    ).toBe('opencode')
   })
 
   it('does not let an explicit title override launch identity before any activity is observed', () => {
@@ -430,7 +430,7 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: undefined
       })
-    ).toBe('claude')
+    ).toBeNull()
 
     expect(
       resolveTabAgentFromSignals({
@@ -440,12 +440,10 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: undefined
       })
-    ).toBe('claude')
+    ).toBeNull()
   })
 
-  it('clears local launch identity once observed activity vanishes at a shell title', () => {
-    // Why: matches the clear effect — the dropped hook row plus a shell title
-    // is the crash/kill exit evidence, so the resolver must not lag it.
+  it('keeps launch identity until the lifecycle effect clears it', () => {
     expect(
       resolveTabAgentFromSignals({
         hasObservedAgentSignal: true,
@@ -454,7 +452,7 @@ describe('resolveTabAgentFromSignals', () => {
         hookAgent: null,
         launchAgent: 'codex'
       })
-    ).toBeNull()
+    ).toBe('codex')
   })
 
   it('keeps launch identity at a shell title while a sibling hook row is live', () => {
@@ -495,7 +493,7 @@ describe('resolveTabAgentFromSignals', () => {
         focusedCompletedHookAgent: 'claude',
         launchAgent: 'claude'
       })
-    ).toBeNull()
+    ).toBe('claude')
   })
 
   it('keeps hook identity for remote panes', () => {
@@ -523,10 +521,7 @@ describe('resolveTabAgentFromSignals', () => {
     ).toBe('codex')
   })
 
-  it('clears local launch identity once a completed hook and shell title prove exit', () => {
-    // Why: without foreground probing, a completed hook plus the title back at
-    // a shell is the process-gone evidence — the same signals that clear the
-    // sidebar row — so stale launch identity must not keep painting the tab.
+  it('keeps completed-hook identity above a stale launch record at a shell title', () => {
     expect(
       resolveTabAgentFromSignals({
         hasObservedAgentSignal: true,
@@ -536,7 +531,7 @@ describe('resolveTabAgentFromSignals', () => {
         focusedCompletedHookAgent: 'claude',
         launchAgent: 'claude'
       })
-    ).toBeNull()
+    ).toBe('claude')
   })
 })
 
@@ -672,7 +667,9 @@ describe('useTabAgent', () => {
     await renderHookProbe({ ...baseTab, title: 'zsh' })
 
     expect(clearTabLaunchAgent).toHaveBeenCalledWith('tab-1')
-    expect(latestHookAgent).toBeNull()
+    // Clearing launch lifecycle evidence leaves the completed hook as the
+    // canonical display identity for this pane.
+    expect(latestHookAgent).toBe('codex')
     expect(getForegroundProcess).not.toHaveBeenCalled()
   })
 

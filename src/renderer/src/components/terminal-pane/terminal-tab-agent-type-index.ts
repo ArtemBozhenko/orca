@@ -1,5 +1,7 @@
 import type { AgentStatusEntry, AgentType } from '../../../../shared/agent-status-types'
 import type { PaneForegroundAgentEntry } from '../../store/slices/pane-foreground-agent'
+import { resolveCanonicalPaneAgentIdentity } from '../../../../shared/pane-agent-identity-adapter'
+import { agentTypeToIconAgent } from '@/lib/agent-status'
 
 export type TerminalTabAgentTypeState = Record<string, AgentStatusEntry>
 export type TerminalTabAgentTypesByLeaf = Readonly<Record<string, AgentType>>
@@ -46,7 +48,13 @@ export function createTerminalTabAgentTypeSelector(
       const nextByTabId = new Map<string, Record<string, AgentType>>()
       for (const [paneKey, entry] of Object.entries(state)) {
         dependencies.onEntryVisited?.(paneKey)
-        if (!entry.agentType) {
+        const entryAgent = agentTypeToIconAgent(entry.agentType)
+        const identity = resolveCanonicalPaneAgentIdentity({
+          hookAgent: entry.state === 'done' ? null : entryAgent,
+          hookIsLive: true,
+          completedHookAgent: entry.state === 'done' ? entryAgent : null
+        })
+        if (!identity.agent) {
           continue
         }
         const separator = paneKey.indexOf(':')
@@ -57,15 +65,22 @@ export function createTerminalTabAgentTypeSelector(
         const leafId = paneKey.slice(separator + 1)
         const byLeaf = nextByTabId.get(entryTabId)
         if (byLeaf) {
-          byLeaf[leafId] = entry.agentType
+          byLeaf[leafId] = identity.agent
         } else {
-          nextByTabId.set(entryTabId, { [leafId]: entry.agentType })
+          nextByTabId.set(entryTabId, { [leafId]: identity.agent })
         }
       }
       for (const [paneKey, entry] of Object.entries(foreground)) {
         if (!entry.agent || entry.shellForeground || entry.routingRevoked) {
           continue
         }
+        const identity = resolveCanonicalPaneAgentIdentity({
+          foregroundAgent: entry.agent,
+          processProof: entry.processProof
+        })
+        if (!identity.agent) {
+          continue
+        }
         const separator = paneKey.indexOf(':')
         if (separator <= 0) {
           continue
@@ -74,9 +89,9 @@ export function createTerminalTabAgentTypeSelector(
         const leafId = paneKey.slice(separator + 1)
         const byLeaf = nextByTabId.get(entryTabId)
         if (byLeaf) {
-          byLeaf[leafId] ??= entry.agent
+          byLeaf[leafId] ??= identity.agent
         } else {
-          nextByTabId.set(entryTabId, { [leafId]: entry.agent })
+          nextByTabId.set(entryTabId, { [leafId]: identity.agent })
         }
       }
 

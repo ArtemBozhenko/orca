@@ -115,7 +115,15 @@ export type CanonicalPaneAgentIdentity = {
   supersededSources: readonly PaneAgentEvidenceSource[]
 }
 
-/** Authority order, strongest first. This is the only place precedence is expressed. */
+/**
+ * Authority order, strongest first. This is the only place precedence is expressed.
+ *
+ * Launch intentionally outranks completed-hook while run keys are absent: a completed hook is
+ * newer evidence in the abstract, but the optional run-key filter currently treats undefined as
+ * eligible and an unfiltered completed row can belong to a previous occupant of a reused pane;
+ * launch is scoped to how this pane was set up. Once production supplies `launchRun` and
+ * `completedHookRun`, revisit this ordering (the expiry test names the required review).
+ */
 const SOURCE_RANK: readonly PaneAgentEvidenceSource[] = PANE_AGENT_EVIDENCE_SOURCES
 
 /** Exported for the source/rank drift ratchet; the rank is the canonical source list itself. */

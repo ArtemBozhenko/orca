@@ -110,7 +110,7 @@ describe('useTabAgent retained completion identity', () => {
 
     await renderProbe()
 
-    expect(latestAgent).toBe('codex')
+    expect(latestAgent).toBe('claude')
   })
 
   it('keeps a live focused hook ahead of retained identity', async () => {
@@ -135,7 +135,7 @@ describe('useTabAgent retained completion identity', () => {
 
     await renderProbe({ ...baseTab, launchAgent: 'codex', title: '✳ Claude Code' })
 
-    expect(latestAgent).toBe('claude')
+    expect(latestAgent).toBe('codex')
   })
 
   it('keeps focused launch metadata ahead of sibling retained identity', async () => {

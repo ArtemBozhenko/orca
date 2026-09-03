@@ -222,7 +222,7 @@ describe('buildTitleDerivedAgentRows', () => {
     ).toEqual([['codex', 'working', 'Codex', '⠼ demo-repo']])
   })
 
-  it('keeps explicit title identity over the launched agent', () => {
+  it('keeps launch identity over a conflicting title', () => {
     const launchAgent: TuiAgent = 'claude'
     const rows = buildWorktreeAgentRows({
       tabs: [makeTab('tab-1', { launchAgent })],
@@ -236,7 +236,7 @@ describe('buildTitleDerivedAgentRows', () => {
       now: 2000
     })
 
-    expect(rows.map((row) => [row.agentType, row.state])).toEqual([['codex', 'working']])
+    expect(rows.map((row) => [row.agentType, row.state])).toEqual([['claude', 'working']])
   })
 
   it('produces no row for a spinner-only title when the tab has no launch identity', () => {
@@ -362,7 +362,7 @@ describe('buildTitleDerivedAgentRows', () => {
 
     expect(rowsFor('⠋ Claude Code').map((row) => row.agentType)).toEqual(['claude'])
     // Pane reuse: the user exited OpenCode and ran claude in the same pane.
-    expect(rowsFor('✳ Claude Code', 'opencode').map((row) => row.agentType)).toEqual(['claude'])
+    expect(rowsFor('✳ Claude Code', 'opencode').map((row) => row.agentType)).toEqual(['opencode'])
     // No owner to defend the pane: naming Claude stays the only available identity.
     expect(rowsFor('⠋ use Claude Sonnet').map((row) => row.agentType)).toEqual(['claude'])
     expect(rowsFor('zsh', 'opencode')).toHaveLength(0)

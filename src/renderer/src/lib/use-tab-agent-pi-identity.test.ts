@@ -26,7 +26,7 @@ describe('resolveTabAgentFromSignals — Pi/OMP identity', () => {
         hookAgent: 'pi',
         launchAgent: 'omp'
       })
-    ).toBe('omp')
+    ).toBe('pi')
 
     expect(
       resolveTabAgentFromSignals({
@@ -36,7 +36,7 @@ describe('resolveTabAgentFromSignals — Pi/OMP identity', () => {
         hookAgent: 'pi',
         launchAgent: 'omp'
       })
-    ).toBe('omp')
+    ).toBe('pi')
 
     expect(
       resolveTabAgentFromSignals({
@@ -57,7 +57,7 @@ describe('resolveTabAgentFromSignals — Pi/OMP identity', () => {
         hookAgent: 'omp',
         launchAgent: 'pi'
       })
-    ).toBe('pi')
+    ).toBe('omp')
 
     expect(
       resolveTabAgentFromSignals({
@@ -185,6 +185,13 @@ describe('resolveTabAgentFromSignals — Pi/OMP identity', () => {
         title: 'zsh',
         hookAgent: null,
         processAgent: 'codex',
+        processProof: {
+          agent: 'codex',
+          processIncarnation: 'fixture-codex',
+          authorityId: 'fixture-authority',
+          capturedAgeMs: 10,
+          validForMs: 1_000
+        },
         launchAgent: 'omp'
       })
     ).toBe('codex')
@@ -252,7 +259,7 @@ describe('resolveTabAgentFromSignals — identity vs liveness', () => {
         sleepingSessionAgent: 'claude',
         launchAgent: 'codex'
       })
-    ).toBe('omp')
+    ).toBe('codex')
   })
 
   it('never lets a title override a live hook (ground truth)', () => {
@@ -277,7 +284,7 @@ describe('resolveTabAgentFromSignals — identity vs liveness', () => {
         focusedCompletedHookAgent: 'codex',
         launchAgent: undefined
       })
-    ).toBe('claude')
+    ).toBe('codex')
   })
 
   it('keeps a launchAgent-less pane with a live Pi hook stable on Pi', () => {
@@ -317,7 +324,7 @@ describe('resolveTabAgentFromSignals — identity vs liveness', () => {
         siblingCompletedHookAgent: 'gemini',
         launchAgent: undefined
       })
-    ).toBe('gemini')
+    ).toBe('claude')
   })
 
   it('does not let a sibling pane re-own the focused pane ambiguous Pi title', () => {
@@ -333,7 +340,7 @@ describe('resolveTabAgentFromSignals — identity vs liveness', () => {
         siblingCompletedHookAgent: 'omp',
         launchAgent: undefined
       })
-    ).toBe('pi')
+    ).toBe('omp')
   })
 
   it('does not flash the exited agent before a hookless reuse title reclaims on mount', () => {
@@ -357,7 +364,7 @@ describe('resolveTabAgentFromSignals — identity vs liveness', () => {
       focusedCompletedHookAgent: 'claude',
       launchAgent: undefined
     })
-    expect(onMount).toBe('codex')
-    expect(afterObserved).toBe('codex')
+    expect(onMount).toBe('claude')
+    expect(afterObserved).toBe('claude')
   })
 })

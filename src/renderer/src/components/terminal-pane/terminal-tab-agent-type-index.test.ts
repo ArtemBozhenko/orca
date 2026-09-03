@@ -82,7 +82,8 @@ describe('createTerminalTabAgentTypeSelector', () => {
       }
     }
 
-    expect(select({}, 'tab-1', foreground)).toEqual({ 'leaf-a': 'codex' })
+    // A bare foreground name is only an uncovered hint; no icon is projected without a host proof.
+    expect(select({}, 'tab-1', foreground)).toEqual({})
     expect(select({ 'tab-1:leaf-a': entry('claude') }, 'tab-1', foreground)).toEqual({
       'leaf-a': 'claude'
     })

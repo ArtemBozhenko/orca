@@ -13,7 +13,8 @@ describe('resolveNativeChatLeafTitleAgent', () => {
         leafId: 'leaf-2',
         panes,
         runtimePaneTitlesByPaneId: { 1: 'PowerShell', 2: 'Codex - working' },
-        tabLabel: 'PowerShell'
+        tabLabel: 'PowerShell',
+        launchAgent: 'codex'
       })
     ).toBe('codex')
   })
@@ -46,7 +47,8 @@ describe('resolveNativeChatLeafTitleAgent', () => {
         leafId: 'leaf-1',
         panes: [panes[0]],
         runtimePaneTitlesByPaneId: {},
-        terminalTitle: 'OpenClaude'
+        terminalTitle: 'OpenClaude',
+        launchAgent: 'openclaude'
       })
     ).toBe('openclaude')
   })

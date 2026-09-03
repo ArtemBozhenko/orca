@@ -70,7 +70,7 @@ describe('resolveTabAgentFromSignals sleeping-session precedence', () => {
         sleepingSessionAgent: 'claude',
         launchAgent: 'codex'
       })
-    ).toBe('claude')
+    ).toBe('codex')
   })
 
   it('keeps live hook identity ahead of a sleeping-session record', () => {
@@ -96,7 +96,7 @@ describe('resolveTabAgentFromSignals sleeping-session precedence', () => {
         sleepingSessionAgent: 'gemini',
         launchAgent: 'codex'
       })
-    ).toBe('gemini')
+    ).toBe('codex')
   })
 
   it('keeps a genuine tab icon when its sleeping record matches the launchAgent', () => {
@@ -178,7 +178,7 @@ describe('useTabAgent sleeping-session', () => {
 
     await renderHookProbe({ ...baseTab, title: '⠐ Explain GitHub issue simply' })
 
-    expect(latestHookAgent).toBe('claude')
+    expect(latestHookAgent).toBe('codex')
     expect(getForegroundProcess).not.toHaveBeenCalled()
   })
 })
