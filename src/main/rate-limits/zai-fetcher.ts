@@ -2,7 +2,6 @@ import { net } from 'electron'
 import type { ProviderRateLimits, RateLimitWindow } from '../../shared/rate-limit-types'
 
 export const ZAI_USAGE_ENDPOINT = 'https://api.z.ai/api/monitor/usage/quota/limit'
-export const ZAI_CN_USAGE_ENDPOINT = 'https://open.bigmodel.cn/api/monitor/usage/quota/limit'
 
 const API_TIMEOUT_MS = 15_000
 const SESSION_WINDOW_MINUTES = 300
@@ -36,7 +35,8 @@ type ZaiQuotaResponse = {
 
 export type FetchZaiRateLimitsOptions = {
   apiKey: string
-  endpoint?: string
+  /** Caller's fetch-cycle signal; combined with the request timeout so a cancelled cycle aborts immediately. */
+  signal?: AbortSignal
 }
 
 function clampPercent(value: number): number {
@@ -148,6 +148,10 @@ function handleHttpError(status: number): ProviderRateLimits | null {
   return status === 200 ? null : makeError(`Z.ai usage fetch failed (${status})`, 'unknown')
 }
 
+/**
+ * Reads the z.ai GLM Coding Plan quota (5-hour and weekly windows) from the
+ * monitor API and maps it onto the shared provider rate-limit shape.
+ */
 export async function fetchZaiRateLimits(
   options: FetchZaiRateLimitsOptions
 ): Promise<ProviderRateLimits> {
@@ -156,10 +160,13 @@ export async function fetchZaiRateLimits(
     return makeUnavailable('Z.ai API key not configured')
   }
   try {
-    const response = await net.fetch(options.endpoint ?? ZAI_USAGE_ENDPOINT, {
+    const timeoutSignal = AbortSignal.timeout(API_TIMEOUT_MS)
+    const response = await net.fetch(ZAI_USAGE_ENDPOINT, {
       // Why: z.ai's monitor API takes the raw key — a `Bearer ` prefix 401s.
       headers: { Authorization: apiKey, 'Accept-Language': 'en-US,en' },
-      signal: AbortSignal.timeout(API_TIMEOUT_MS)
+      // Why: without the caller's signal a cancelled fetch cycle stays pending in
+      // `Promise.allSettled` until the 15s timeout fires.
+      signal: options.signal ? AbortSignal.any([options.signal, timeoutSignal]) : timeoutSignal
     })
     const httpError = handleHttpError(response.status)
     if (httpError) {

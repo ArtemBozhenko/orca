@@ -100,6 +100,16 @@ describe('fetchZaiRateLimits', () => {
     expect(result.usageMetadata?.failureKind).toBe('usage-unavailable')
   })
 
+  it('aborts with the caller signal instead of waiting out the request timeout', async () => {
+    netFetchMock.mockResolvedValue(jsonResponse(QUOTA_RESPONSE))
+    const controller = new AbortController()
+    await fetchZaiRateLimits({ apiKey: 'key-6', signal: controller.signal })
+    const passedSignal = netFetchMock.mock.calls[0]?.[1]?.signal as AbortSignal
+    expect(passedSignal.aborted).toBe(false)
+    controller.abort()
+    expect(passedSignal.aborted).toBe(true)
+  })
+
   it('ignores windows whose unit code is unknown', async () => {
     netFetchMock.mockResolvedValue(
       jsonResponse({

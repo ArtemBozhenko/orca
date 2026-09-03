@@ -6,6 +6,7 @@ import { ZaiIcon } from '../status-bar/icons'
 import { SearchableSetting } from './SearchableSetting'
 import type { AccountsPaneSectionModel } from './accounts-pane-types'
 
+/** Renders the Accounts pane section that stores the Z.ai API key used for GLM Coding Plan usage. */
 export function renderZaiAccountsSection(model: AccountsPaneSectionModel): React.JSX.Element {
   const { recordFeatureInteraction, settings, updateSettings } = model
   return (

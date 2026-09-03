@@ -191,7 +191,7 @@ export abstract class RateLimitServiceFullCyclePreparation extends RateLimitServ
             groupId: miniMaxGroupId,
             models: miniMaxModels
           }),
-      fetchZaiRateLimits({ apiKey: zaiApiKey })
+      fetchZaiRateLimits({ apiKey: zaiApiKey, signal })
     ])
 
     if (signal.aborted) {

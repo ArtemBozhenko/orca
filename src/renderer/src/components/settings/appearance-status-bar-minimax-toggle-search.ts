@@ -2,6 +2,7 @@ import type { StatusBarItem } from '../../../../shared/ui-chrome-types'
 import { translate } from '@/i18n/i18n'
 import { translateSearchKeyword } from './settings-search-keywords'
 
+/** Settings-search entry for the Appearance toggle that shows or hides the MiniMax status-bar segment. */
 export function getMiniMaxStatusBarToggleSearchEntry(): {
   id: StatusBarItem
   title: string
