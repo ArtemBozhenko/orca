@@ -1,3 +1,4 @@
+import { InFlightPromiseDedupe, stableInFlightKey } from '../../shared/in-flight-promise-dedupe'
 import type { SshChannelMultiplexer } from '../ssh/ssh-channel-multiplexer'
 import type { PtyProcessInspection } from './pty-process-inspection'
 import { writeToSshPty, writeToSshPtyWithSettlement } from './ssh-pty-write'
@@ -9,6 +10,8 @@ type SshPtyProviderRpcContext = {
 
 /** RPC leaves that only need the SSH mux and relay-id mapping. */
 export function createSshPtyProviderRpcOperations({ mux, toRelayPtyId }: SshPtyProviderRpcContext) {
+  // Scoped to this provider instance, so one connection's panes never join another's.
+  const inspectProcessDedupe = new InFlightPromiseDedupe<PtyProcessInspection>()
   return {
     deleteWorktreeHistory: async (worktreeId: string): Promise<void> => {
       await mux.request('pty.deleteWorktreeHistory', { worktreeId })
@@ -54,12 +57,21 @@ export function createSshPtyProviderRpcOperations({ mux, toRelayPtyId }: SshPtyP
       id: string,
       options?: { expectedIncarnationId?: string }
     ): Promise<PtyProcessInspection> => {
-      return (await mux.request('pty.inspectProcess', {
-        id: toRelayPtyId(id),
-        ...(options?.expectedIncarnationId
-          ? { expectedIncarnationId: options.expectedIncarnationId }
-          : {})
-      })) as PtyProcessInspection
+      const relayPtyId = toRelayPtyId(id)
+      // Why: overlapping probes of one pane+incarnation are one host observation, and the relay
+      // answers all of them off a single TTL-cached process table anyway. Rejections are shared
+      // on purpose -- callers classify any failure as `unverifiable`, never `exited`, and the
+      // entry is dropped on settle so the next poll re-asks the host rather than reusing a blip.
+      return inspectProcessDedupe.run(
+        stableInFlightKey([relayPtyId, options?.expectedIncarnationId ?? null]),
+        async () =>
+          (await mux.request('pty.inspectProcess', {
+            id: relayPtyId,
+            ...(options?.expectedIncarnationId
+              ? { expectedIncarnationId: options.expectedIncarnationId }
+              : {})
+          })) as PtyProcessInspection
+      )
     },
     serialize: async (ids: string[]): Promise<string> => {
       const result = await mux.request('pty.serialize', {
