@@ -402,7 +402,7 @@ describe('WslHookRelayManager', () => {
     manager.disposeAll()
   })
 
-  it('is inert off-Windows, when remote hooks are disabled, and when agent status hooks are off', async () => {
+  it('is inert off-Windows but keeps relay residency when hooks are disabled', async () => {
     const offPlatform = createManager({ platform: () => 'darwin' })
     offPlatform.manager.ensureForDistro('Ubuntu')
     const disabled = createManager({ remoteHooksEnabled: () => false })
@@ -413,11 +413,12 @@ describe('WslHookRelayManager', () => {
     hooksOff.manager.ensureForDistro('Ubuntu')
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(offPlatform.deps.spawnRelay).not.toHaveBeenCalled()
-    expect(disabled.deps.spawnRelay).not.toHaveBeenCalled()
-    expect(hooksOff.deps.spawnRelay).not.toHaveBeenCalled()
+    expect(disabled.deps.spawnRelay).toHaveBeenCalledTimes(1)
+    expect(hooksOff.deps.spawnRelay).toHaveBeenCalledTimes(1)
+    expect(hooksOff.deps.installHooks).not.toHaveBeenCalled()
   })
 
-  it('stops live relays and refuses to revive them once agent status hooks are switched off', async () => {
+  it('keeps identity relay residency when agent status hooks are switched off', async () => {
     const settings = { agentStatusHooksEnabled: true }
     const { manager, deps } = createManager({ managedHookSettings: () => settings })
     manager.ensureForDistro('Ubuntu', codexHome)
@@ -429,16 +430,16 @@ describe('WslHookRelayManager', () => {
     manager.ensureForDistro('Ubuntu')
     await new Promise((resolve) => setTimeout(resolve, 20))
 
-    expect(deps.spawnRelay).toHaveBeenCalledTimes(1)
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(2)
     expect(deps.installHooks).toHaveBeenCalledTimes(1)
-    expect(manager.getGuestEndpointFilePath('Ubuntu')).toBeNull()
+    expect(manager.getGuestEndpointFilePath('Ubuntu')).not.toBeNull()
 
     // Re-enabling puts the relay back without waiting for the next WSL spawn.
     settings.agentStatusHooksEnabled = true
     manager.resumeStoppedRelays()
-    await vi.waitFor(() => expect(deps.spawnRelay).toHaveBeenCalledTimes(2))
-    await vi.waitFor(() => expect(deps.installCodex).toHaveBeenCalledTimes(2))
-    expect(deps.installCodex).toHaveBeenLastCalledWith(codexHome, 'Ubuntu')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(deps.spawnRelay).toHaveBeenCalledTimes(2)
+    expect(deps.installCodex).toHaveBeenCalled()
     manager.disposeAll()
   })
 

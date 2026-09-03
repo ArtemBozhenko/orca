@@ -149,6 +149,8 @@ export function addOrcaWslInteropEnv(
     ...opencodeOverlayEntries,
     'ORCA_WSL_HOOK_RELAY_VERSION/u',
     'ORCA_WSL_HOOK_INSTANCE/u',
+    'ORCA_WSL_RELAY_HOOKS_ENABLED/u',
+    'ORCA_WSL_RELAY_DISTRO/u',
     'ORCA_OMP_SOURCE_AGENT_DIR/p',
     'ORCA_OMP_STATUS_EXTENSION/p',
     ...worktreeSetupWslenvEntries(env)

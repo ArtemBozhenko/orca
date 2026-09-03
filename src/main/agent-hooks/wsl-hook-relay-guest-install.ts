@@ -3,6 +3,7 @@
 // decides when a still-running relay may install again. Kept out of the
 // manager so that file stays about relay lifecycle.
 import type { ManagedHookDetectionSettings } from './managed-hook-detection-commands'
+import { isAgentStatusHooksEnabled } from './managed-agent-hook-controls'
 import type { installRemoteManagedAgentHooks } from './remote-managed-hook-installers'
 import { requestGuestOpenCodeOverlayDir } from './wsl-guest-plugin-install'
 import { installWslGuestHooks } from './wsl-hook-fs-adapter'
@@ -17,6 +18,7 @@ type GuestInstallDeps = {
   managedHookSettings: () => ManagedHookDetectionSettings
   pluginSources: () => PluginSources
   warn: (message: string) => void
+  remoteHooksEnabled?: () => boolean
 }
 
 /** Structural slice of the manager's DistroState this pass reads and writes. */
@@ -35,6 +37,12 @@ export async function runWslRelayGuestInstall(
   mux: SshChannelMultiplexer,
   guestHome: string
 ): Promise<void> {
+  if (
+    deps.remoteHooksEnabled &&
+    (!deps.remoteHooksEnabled() || !isAgentStatusHooksEnabled(deps.managedHookSettings()))
+  ) {
+    return
+  }
   state.lastInstallAt = Date.now()
   await installWslGuestHooks({
     mux,
@@ -68,6 +76,12 @@ export async function maybeRerunWslRelayGuestInstall(
     !guestHome ||
     mux.isDisposed() ||
     Date.now() - (state.lastInstallAt ?? 0) < REINSTALL_MIN_INTERVAL_MS
+  ) {
+    return
+  }
+  if (
+    deps.remoteHooksEnabled &&
+    (!deps.remoteHooksEnabled() || !isAgentStatusHooksEnabled(deps.managedHookSettings()))
   ) {
     return
   }

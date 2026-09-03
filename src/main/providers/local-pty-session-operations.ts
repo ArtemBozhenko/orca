@@ -23,13 +23,7 @@ import {
 } from './local-pty-provider-state'
 import type { LocalPtyProviderOptions } from './local-pty-provider-types'
 import type { PtyProcessInfo } from './types'
-import {
-  createWslGuestProcessIndexes,
-  readWslGuestProcessInventory,
-  resolveWslGuestForegroundProcess,
-  WSL_GUEST_INVENTORY_MAX_CONCURRENCY,
-  type WslGuestProcessInventoryRead
-} from './wsl-guest-process-inventory'
+import { wslRelayIdentityReader } from './wsl-relay-identity-reader'
 import type { ForegroundProcessEvidence } from '../../shared/foreground-process-evidence'
 
 export function writeLocalPty(id: string, data: string): boolean {
@@ -141,32 +135,30 @@ export async function listLocalPtyProcesses(opts?: {
       wslByDistro.set(distro, ids)
     }
   }
-  const inventories = new Map<string, WslGuestProcessInventoryRead>()
+  const identityByPty = new Map<
+    string,
+    Awaited<ReturnType<typeof wslRelayIdentityReader.readBatch>>[number]
+  >()
   const distros = [...wslByDistro.keys()]
-  let nextDistroIndex = 0
-  const readNextDistro = async (): Promise<void> => {
-    while (nextDistroIndex < distros.length) {
-      const distro = distros[nextDistroIndex++]!
-      inventories.set(
-        distro,
-        await readWslGuestProcessInventory(distro, {
-          deadlineMs: opts?.deadlineMs,
-          signal: opts?.signal
-        })
-      )
-    }
-  }
   await Promise.all(
-    Array.from({ length: Math.min(WSL_GUEST_INVENTORY_MAX_CONCURRENCY, distros.length) }, () =>
-      readNextDistro()
-    )
+    distros.map(async (distro) => {
+      const ids = wslByDistro.get(distro) ?? []
+      const anchors = ids
+        .map((id) => ptyWslShellAnchors.get(id))
+        .filter((anchor): anchor is NonNullable<typeof anchor> => anchor !== undefined)
+      const results = await wslRelayIdentityReader.readBatch(distro, anchors, {
+        signal: opts?.signal,
+        timeoutMs:
+          opts?.deadlineMs === undefined ? undefined : Math.max(1, opts.deadlineMs - Date.now())
+      })
+      let index = 0
+      for (const id of ids) {
+        if (ptyWslShellAnchors.has(id)) {
+          identityByPty.set(id, results[index++]!)
+        }
+      }
+    })
   )
-  const indexesByDistro = new Map<string, ReturnType<typeof createWslGuestProcessIndexes>>()
-  for (const [distro, read] of inventories) {
-    if (read.status === 'ok') {
-      indexesByDistro.set(distro, createWslGuestProcessIndexes(read.inventory))
-    }
-  }
 
   return entries.flatMap(([id, proc]) => {
     // Inventory reads are asynchronous; a PTY may have exited while they ran.
@@ -178,19 +170,14 @@ export async function listLocalPtyProcesses(opts?: {
     let title = proc.process || ptyShellName.get(id) || 'shell'
     let foregroundProcessEvidence: ForegroundProcessEvidence | undefined
     if (distro) {
-      const read = inventories.get(distro)
       const anchor = ptyWslShellAnchors.get(id)
-      const resolution =
-        read?.status === 'ok' && anchor
-          ? resolveWslGuestForegroundProcess(
-              read.inventory,
-              anchor,
-              indexesByDistro.get(distro) ?? createWslGuestProcessIndexes(read.inventory)
-            )
-          : {
-              status: 'unverifiable' as const,
-              reason: read?.status === 'unverifiable' ? read.reason : 'anchor_missing'
-            }
+      const resolution = anchor
+        ? (identityByPty.get(id) ?? {
+            status: 'unverifiable' as const,
+            reason: 'relay_unavailable',
+            capturedAgeMs: 0
+          })
+        : { status: 'unverifiable' as const, reason: 'anchor_missing', capturedAgeMs: 0 }
       foregroundProcessEvidence =
         resolution.status === 'live'
           ? {
@@ -198,14 +185,14 @@ export async function listLocalPtyProcesses(opts?: {
               processName: resolution.processName,
               authorityGeneration: ptyIncarnations.get(id) ?? 'local-wsl',
               observationEpoch: evidenceEpoch,
-              capturedAgeMs: 0
+              capturedAgeMs: resolution.capturedAgeMs
             }
           : {
               verdict: 'unverifiable',
               reason: resolution.reason,
               authorityGeneration: ptyIncarnations.get(id) ?? 'local-wsl',
               observationEpoch: evidenceEpoch,
-              capturedAgeMs: 0
+              capturedAgeMs: resolution.capturedAgeMs
             }
       if (resolution.status === 'live') {
         ptyWslShellAnchors.set(id, resolution.anchor)

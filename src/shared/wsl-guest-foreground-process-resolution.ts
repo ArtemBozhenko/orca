@@ -1,5 +1,5 @@
-import { recognizeAgentProcessFromCommandLine } from '../../shared/agent-process-recognition'
-import type { WslShellProcessAnchor } from '../../shared/wsl-shell-process-anchor'
+import { recognizeAgentProcessFromCommandLine } from './agent-process-recognition'
+import type { WslShellProcessAnchor } from './wsl-shell-process-anchor'
 import type {
   WslGuestProcessInventory,
   WslGuestProcessRow

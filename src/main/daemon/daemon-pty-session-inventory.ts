@@ -15,13 +15,7 @@ import type { ListSessionsResult, SessionInfo } from './types'
 import { PtyProcessListAdmission } from '../providers/pty-process-list-admission'
 import type { PtyProcessInfo } from '../providers/types'
 import type { ForegroundProcessEvidence } from '../../shared/foreground-process-evidence'
-import {
-  createWslGuestProcessIndexes,
-  readWslGuestProcessInventory,
-  resolveWslGuestForegroundProcess,
-  WSL_GUEST_INVENTORY_MAX_CONCURRENCY,
-  type WslGuestProcessInventoryRead
-} from '../providers/wsl-guest-process-inventory'
+import { wslRelayIdentityReader } from '../providers/wsl-relay-identity-reader'
 
 export abstract class DaemonPtySessionInventory extends DaemonPtyProcessInspection {
   async listProcesses(opts?: {
@@ -57,40 +51,37 @@ export abstract class DaemonPtySessionInventory extends DaemonPtyProcessInspecti
       const processes: PtyProcessInfo[] = []
       const aliveSessionIds = new Set<string>()
       const evidenceEpoch = Date.now()
-      const wslByDistro = new Map<string, WslGuestProcessInventoryRead>()
+      const wslBySession = new Map<
+        string,
+        Awaited<ReturnType<typeof wslRelayIdentityReader.readBatch>>[number]
+      >()
       if (process.platform === 'win32') {
-        const distros = new Set(
-          result.sessions
-            .filter((session) => session.isAlive && session.wslDistro)
-            .filter((session) => session.wslShellAnchor)
-            .map((session) => session.wslDistro as string)
-        )
-        const distroList = [...distros]
-        let nextDistroIndex = 0
-        const readNextDistro = async (): Promise<void> => {
-          while (nextDistroIndex < distroList.length) {
-            const distro = distroList[nextDistroIndex++]!
-            wslByDistro.set(
-              distro,
-              await readWslGuestProcessInventory(distro, {
-                deadlineMs: opts?.deadlineMs,
-                signal: opts?.signal
-              })
-            )
+        const byDistro = new Map<string, typeof result.sessions>()
+        for (const session of result.sessions) {
+          if (session.isAlive && session.wslDistro && session.wslShellAnchor) {
+            const group = byDistro.get(session.wslDistro) ?? []
+            group.push(session)
+            byDistro.set(session.wslDistro, group)
           }
         }
         await Promise.all(
-          Array.from(
-            { length: Math.min(WSL_GUEST_INVENTORY_MAX_CONCURRENCY, distroList.length) },
-            () => readNextDistro()
-          )
+          [...byDistro].map(async ([distro, sessions]) => {
+            const values = await wslRelayIdentityReader.readBatch(
+              distro,
+              sessions.map((session) => session.wslShellAnchor!),
+              {
+                signal: opts?.signal,
+                timeoutMs:
+                  opts?.deadlineMs === undefined
+                    ? undefined
+                    : Math.max(1, opts.deadlineMs - Date.now())
+              }
+            )
+            sessions.forEach((session, index) =>
+              wslBySession.set(session.sessionId, values[index]!)
+            )
+          })
         )
-      }
-      const indexesByDistro = new Map<string, ReturnType<typeof createWslGuestProcessIndexes>>()
-      for (const [distro, inventory] of wslByDistro) {
-        if (inventory.status === 'ok') {
-          indexesByDistro.set(distro, createWslGuestProcessIndexes(inventory.inventory))
-        }
       }
       for (const session of result.sessions) {
         if (!session.isAlive) {
@@ -98,16 +89,7 @@ export abstract class DaemonPtySessionInventory extends DaemonPtyProcessInspecti
         }
         aliveSessionIds.add(session.sessionId)
         const { worktreeId } = parsePtySessionId(session.sessionId)
-        const inventory = session.wslDistro ? wslByDistro.get(session.wslDistro) : undefined
-        const resolution =
-          session.wslDistro && session.wslShellAnchor && inventory?.status === 'ok'
-            ? resolveWslGuestForegroundProcess(
-                inventory.inventory,
-                session.wslShellAnchor,
-                indexesByDistro.get(session.wslDistro) ??
-                  createWslGuestProcessIndexes(inventory.inventory)
-              )
-            : null
+        const resolution = session.wslDistro ? wslBySession.get(session.sessionId) : null
         const foregroundProcessEvidence: ForegroundProcessEvidence | undefined = session.wslDistro
           ? resolution?.status === 'live'
             ? {
@@ -115,19 +97,15 @@ export abstract class DaemonPtySessionInventory extends DaemonPtyProcessInspecti
                 processName: resolution.processName,
                 authorityGeneration: session.incarnationId ?? 'daemon-wsl',
                 observationEpoch: evidenceEpoch,
-                capturedAgeMs: 0
+                capturedAgeMs: resolution.capturedAgeMs
               }
             : {
                 verdict: 'unverifiable',
                 reason:
-                  resolution?.status === 'unverifiable'
-                    ? resolution.reason
-                    : inventory?.status === 'unverifiable'
-                      ? inventory.reason
-                      : 'anchor_missing',
+                  resolution?.status === 'unverifiable' ? resolution.reason : 'anchor_missing',
                 authorityGeneration: session.incarnationId ?? 'daemon-wsl',
                 observationEpoch: evidenceEpoch,
-                capturedAgeMs: 0
+                capturedAgeMs: resolution?.capturedAgeMs ?? 0
               }
           : undefined
         processes.push(

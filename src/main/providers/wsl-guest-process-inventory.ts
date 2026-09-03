@@ -4,23 +4,23 @@ import {
   buildWslExecArgs
 } from '../../shared/wsl-login-shell-command'
 import { resolveWslExecutablePath } from '../wsl/wsl-executable-path'
-import { parseWslGuestProcessInventoryPayload } from './wsl-guest-process-inventory-parser'
-import type { WslGuestProcessInventory } from './wsl-guest-process-inventory-parser'
+import { parseWslGuestProcessInventoryPayload } from '../../shared/wsl-guest-process-inventory-parser'
+import type { WslGuestProcessInventory } from '../../shared/wsl-guest-process-inventory-parser'
 
-export { parseWslGuestProcessInventoryPayload } from './wsl-guest-process-inventory-parser'
+export { parseWslGuestProcessInventoryPayload } from '../../shared/wsl-guest-process-inventory-parser'
 export type {
   WslGuestProcessInventory,
   WslGuestProcessRow
-} from './wsl-guest-process-inventory-parser'
+} from '../../shared/wsl-guest-process-inventory-parser'
 export {
   createWslGuestProcessIndexes,
   resolveWslGuestForegroundProcess
-} from './wsl-guest-foreground-process-resolution'
+} from '../../shared/wsl-guest-foreground-process-resolution'
 export type {
   WslGuestForegroundResolution,
   WslGuestProcessAnchor,
   WslGuestProcessIndexes
-} from './wsl-guest-foreground-process-resolution'
+} from '../../shared/wsl-guest-foreground-process-resolution'
 
 export type WslGuestProcessInventoryRead =
   | { status: 'ok'; inventory: WslGuestProcessInventory }
@@ -35,7 +35,11 @@ export type WslGuestProcessInventoryFailureReason =
   | 'boot_id_missing'
 
 const INVENTORY_TIMEOUT_MS = 5_000
-const INVENTORY_MAX_OUTPUT_BYTES = 4 * 1024 * 1024
+// Legacy compatibility reader retained for fixtures; production WSL identity
+// is served by the resident relay. Keep the historical 32 MiB bound for any
+// direct diagnostic invocation so a busy host cannot overflow Node's default.
+export const PS_MAX_BUFFER_BYTES = 32 * 1024 * 1024
+const INVENTORY_MAX_OUTPUT_BYTES = PS_MAX_BUFFER_BYTES
 const INVENTORY_TTL_MS = 500
 export const WSL_GUEST_INVENTORY_MAX_CONCURRENCY = 4
 const INVENTORY_CACHE_MAX_DISTROS = 32

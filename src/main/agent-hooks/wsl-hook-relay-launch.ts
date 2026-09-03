@@ -277,15 +277,23 @@ export function formatWslRelayFailure(failure: WslRelayStartupFailure): string {
 export function buildWslRelaySpawnEnv(
   coords: Record<string, string>,
   bundleVersion: string,
-  instanceKey: string
+  instanceKey: string,
+  distro?: string,
+  hooksEnabled = true
 ): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {
     ...process.env,
     WSL_UTF8: '1',
-    ORCA_AGENT_HOOK_PORT: coords.ORCA_AGENT_HOOK_PORT,
-    ORCA_AGENT_HOOK_TOKEN: coords.ORCA_AGENT_HOOK_TOKEN,
-    ORCA_AGENT_HOOK_ENV: coords.ORCA_AGENT_HOOK_ENV,
-    ORCA_AGENT_HOOK_VERSION: coords.ORCA_AGENT_HOOK_VERSION,
+    ...(coords.ORCA_AGENT_HOOK_PORT ? { ORCA_AGENT_HOOK_PORT: coords.ORCA_AGENT_HOOK_PORT } : {}),
+    ...(coords.ORCA_AGENT_HOOK_TOKEN
+      ? { ORCA_AGENT_HOOK_TOKEN: coords.ORCA_AGENT_HOOK_TOKEN }
+      : {}),
+    ...(coords.ORCA_AGENT_HOOK_ENV ? { ORCA_AGENT_HOOK_ENV: coords.ORCA_AGENT_HOOK_ENV } : {}),
+    ...(coords.ORCA_AGENT_HOOK_VERSION
+      ? { ORCA_AGENT_HOOK_VERSION: coords.ORCA_AGENT_HOOK_VERSION }
+      : {}),
+    ORCA_WSL_RELAY_HOOKS_ENABLED: hooksEnabled ? '1' : '0',
+    ...(distro ? { ORCA_WSL_RELAY_DISTRO: distro } : {}),
     [WSL_HOOK_RELAY_VERSION_ENV]: bundleVersion,
     [WSL_HOOK_RELAY_INSTANCE_ENV]: instanceKey
   }
