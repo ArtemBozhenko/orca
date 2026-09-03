@@ -36,6 +36,18 @@ export type HostProcessInspection = {
 
 export type TerminalProcessInspection = HostProcessInspection | ClientOnlyUnverifiableInspection
 
+/**
+ * One entry of a batched inspection reply. Each pane carries its own outcome so an
+ * unresolvable pane can only ever be `unverifiable` for itself and never decides a
+ * sibling's verdict (docs/reference/ssh-execution-boundary.md).
+ */
+export type TerminalProcessInspectionBatchEntry =
+  | { inspection: TerminalProcessInspection; error?: never }
+  | { inspection?: never; error: string }
+
+/** Entries admitted per batched inspection request; senders chunk at this bound. */
+export const TERMINAL_PROCESS_INSPECTION_BATCH_LIMIT = 256
+
 export function clientOnlyUnverifiableInspection(reason: string): ClientOnlyUnverifiableInspection {
   return {
     foregroundProcess: null,

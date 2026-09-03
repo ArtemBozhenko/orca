@@ -101,6 +101,8 @@ export function createAgentCompletionProcessMonitor({
     enqueueAgentProcessInspection({
       priority,
       canRun: () => !state.disposed,
+      // Local reads coalesce into one host round trip; remote ones stay admitted one at a time.
+      batched: options.isRemotePtyId?.(ptyId) !== true,
       run: async () => {
         let inspectedRecognizedAgent = false
         let inspectionSucceeded = false

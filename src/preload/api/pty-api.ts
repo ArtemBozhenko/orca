@@ -16,7 +16,10 @@ import type { TerminalSideEffectBatch } from '../../shared/terminal-side-effect-
 import type { TerminalViewAttributes } from '../../shared/terminal-view-attributes'
 import type { TuiAgent } from '../../shared/tui-agent'
 import type { PtyManagementApi } from './pty-management-api'
-import type { TerminalProcessInspection } from '../../shared/terminal-process-inspection'
+import type {
+  TerminalProcessInspection,
+  TerminalProcessInspectionBatchEntry
+} from '../../shared/terminal-process-inspection'
 
 export type PtyApi = {
   spawn: (opts: {
@@ -114,6 +117,10 @@ export type PtyApi = {
     id: string,
     options?: { expectedIncarnationId?: string }
   ) => Promise<TerminalProcessInspection>
+  /** Optional so a renderer paired with an older preload keeps the per-pane path. */
+  inspectProcessBatch?: (
+    requests: readonly { id: string; expectedIncarnationId?: string }[]
+  ) => Promise<TerminalProcessInspectionBatchEntry[]>
   confirmForegroundProcess: (id: string) => Promise<string | null>
   getCwd: (id: string) => Promise<string>
   getSize: (id: string) => Promise<{ cols: number; rows: number } | null>

@@ -1,7 +1,12 @@
 import { getPtyIpc } from '../../pty-host-bindings'
 import { parseAppSshPtyId } from '../../../providers/ssh-pty-id'
 import { inspectPtyProviderProcessForRenderer } from '../../../providers/pty-process-inspection'
-import { clientOnlyUnverifiableInspection } from '../../../../shared/terminal-process-inspection'
+import {
+  clientOnlyUnverifiableInspection,
+  TERMINAL_PROCESS_INSPECTION_BATCH_LIMIT,
+  type TerminalProcessInspection,
+  type TerminalProcessInspectionBatchEntry
+} from '../../../../shared/terminal-process-inspection'
 import {
   PtyProcessListAdmission,
   visitPtyProcessListingsInBatches
@@ -168,25 +173,56 @@ export function installPtyInspectIpcHandlers(deps: {
     }
   )
 
+  const inspectOnePtyProcess = async (
+    id: unknown,
+    expectedIncarnationId: unknown
+  ): Promise<TerminalProcessInspection> => {
+    // Why: same routing hazard as pty:hasPty — an unroutable id must read as client-only unverifiable, not as a local-provider answer or a raised IPC error.
+    if (typeof id !== 'string' || !id || id.startsWith('remote:')) {
+      return clientOnlyUnverifiableInspection('terminal_gone')
+    }
+    // Why: the pre-swap LocalPtyProvider does not own restored daemon ids, so
+    // nothing it reports about one is an observation; the post-swap owner must
+    // answer completion-sensitive inspection.
+    await awaitSwapWindow(id)
+    if (!hasPtyProviderForInspection(id)) {
+      return clientOnlyUnverifiableInspection('terminal_gone')
+    }
+    return typeof expectedIncarnationId === 'string' && expectedIncarnationId
+      ? inspectPtyProviderProcessForRenderer(getProviderForPty(id), id, { expectedIncarnationId })
+      : inspectPtyProviderProcessForRenderer(getProviderForPty(id), id)
+  }
+
   ipcMain.handle(
     'pty:inspectProcess',
-    async (_event, args: { id: string; expectedIncarnationId?: string }) => {
-      // Why: same routing hazard as pty:hasPty — an unroutable id must read as client-only unverifiable, not as a local-provider answer or a raised IPC error.
-      if (typeof args?.id !== 'string' || !args.id || args.id.startsWith('remote:')) {
-        return clientOnlyUnverifiableInspection('terminal_gone')
-      }
-      // Why: the pre-swap LocalPtyProvider does not own restored daemon ids, so
-      // nothing it reports about one is an observation; the post-swap owner must
-      // answer completion-sensitive inspection.
-      await awaitSwapWindow(args.id)
-      if (!hasPtyProviderForInspection(args.id)) {
-        return clientOnlyUnverifiableInspection('terminal_gone')
-      }
-      return args.expectedIncarnationId
-        ? inspectPtyProviderProcessForRenderer(getProviderForPty(args.id), args.id, {
-            expectedIncarnationId: args.expectedIncarnationId
-          })
-        : inspectPtyProviderProcessForRenderer(getProviderForPty(args.id), args.id)
+    async (_event, args: { id: string; expectedIncarnationId?: string }) =>
+      inspectOnePtyProcess(args?.id, args?.expectedIncarnationId)
+  )
+
+  // Why: one renderer round trip for a whole cadence round. Each entry runs the same
+  // per-pane inspection with its OWN expectedIncarnationId and settles independently,
+  // so no pane's guard or failure can reach a sibling.
+  ipcMain.handle(
+    'pty:inspectProcessBatch',
+    async (
+      _event,
+      args: { requests?: unknown }
+    ): Promise<TerminalProcessInspectionBatchEntry[]> => {
+      const requests = Array.isArray(args?.requests)
+        ? args.requests.slice(0, TERMINAL_PROCESS_INSPECTION_BATCH_LIMIT)
+        : []
+      return Promise.all(
+        requests.map(async (request): Promise<TerminalProcessInspectionBatchEntry> => {
+          const entry = (request ?? {}) as { id?: unknown; expectedIncarnationId?: unknown }
+          try {
+            return { inspection: await inspectOnePtyProcess(entry.id, entry.expectedIncarnationId) }
+          } catch (error) {
+            // Carry the message, not a verdict: the renderer re-raises it for this entry only
+            // and classifies it exactly as it would a single-pane rejection.
+            return { error: error instanceof Error ? error.message : String(error) }
+          }
+        })
+      )
     }
   )
 

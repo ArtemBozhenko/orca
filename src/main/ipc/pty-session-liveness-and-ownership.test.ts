@@ -519,4 +519,60 @@ describe('registerPtyHandlers', () => {
       reason: 'terminal_gone'
     })
   })
+  it('answers a batched inspection per entry, with each entry own incarnation guard', async () => {
+    const inspectProcess = vi.fn(
+      async (id: string, options?: { expectedIncarnationId?: string }) => ({
+        foregroundProcess: `${id}:${options?.expectedIncarnationId ?? 'none'}`,
+        hasChildProcesses: true
+      })
+    )
+    registerPtyHandlers(mainWindow as never)
+    setLocalPtyProvider({ inspectProcess } as never)
+
+    await expect(
+      handlers.get('pty:inspectProcessBatch')!(null, {
+        requests: [
+          { id: 'pty-a', expectedIncarnationId: 'inc-a' },
+          { id: 'pty-b' },
+          // An unroutable id is unverifiable for itself and must not fail the round.
+          { id: 'remote:env-1@@terminal-1', expectedIncarnationId: 'inc-c' }
+        ]
+      })
+    ).resolves.toEqual([
+      { inspection: { foregroundProcess: 'pty-a:inc-a', hasChildProcesses: true } },
+      { inspection: { foregroundProcess: 'pty-b:none', hasChildProcesses: true } },
+      {
+        inspection: {
+          foregroundProcess: null,
+          hasChildProcesses: false,
+          verdict: 'unverifiable',
+          reason: 'terminal_gone'
+        }
+      }
+    ])
+    expect(inspectProcess.mock.calls).toEqual([
+      ['pty-a', { expectedIncarnationId: 'inc-a' }],
+      ['pty-b']
+    ])
+  })
+  it('keeps one throwing batch entry from deciding any sibling verdict', async () => {
+    const inspectProcess = vi.fn(async (id: string) => {
+      if (id === 'pty-throws') {
+        throw new Error('boom')
+      }
+      return { foregroundProcess: 'claude', hasChildProcesses: true }
+    })
+    registerPtyHandlers(mainWindow as never)
+    setLocalPtyProvider({ inspectProcess } as never)
+
+    await expect(
+      handlers.get('pty:inspectProcessBatch')!(null, {
+        requests: [{ id: 'pty-ok' }, { id: 'pty-throws' }, { id: 'pty-ok-2' }]
+      })
+    ).resolves.toEqual([
+      { inspection: { foregroundProcess: 'claude', hasChildProcesses: true } },
+      { error: 'boom' },
+      { inspection: { foregroundProcess: 'claude', hasChildProcesses: true } }
+    ])
+  })
 })

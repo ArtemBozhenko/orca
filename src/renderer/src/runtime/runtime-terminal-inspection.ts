@@ -9,6 +9,7 @@ import {
   getRemoteRuntimeTerminalHandle
 } from './runtime-terminal-stream'
 import { parseAppSshPtyId } from '../../../shared/ssh-pty-id'
+import { inspectLocalTerminalProcessCoalesced } from './local-terminal-inspection-batch'
 import {
   classifyTerminalProcessInspectionFailure,
   clientOnlyUnverifiableInspection,
@@ -148,9 +149,13 @@ export async function inspectRuntimeTerminalProcess(
   const remote = isRemoteInspectionPtyId(ptyId)
   if (target.kind !== 'environment' || !terminal) {
     try {
-      const result = await (options?.expectedIncarnationId
-        ? window.api.pty.inspectProcess(ptyId, options)
-        : window.api.pty.inspectProcess(ptyId))
+      // Remote ids keep the per-pane call: their host round trip is admitted one at a
+      // time upstream, and main answers each from its own execution host.
+      const result = await (remote
+        ? options?.expectedIncarnationId
+          ? window.api.pty.inspectProcess(ptyId, options)
+          : window.api.pty.inspectProcess(ptyId)
+        : inspectLocalTerminalProcessCoalesced(ptyId, options))
       return normalizeInspectionResult(result, remote)
     } catch (error) {
       const reason = classifyTerminalProcessInspectionFailure(error)
