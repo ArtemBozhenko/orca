@@ -141,8 +141,23 @@ export function createRendererRecoveryReloadWatchdog(args: {
     documentLanded = false
     // Why: mark this in-place reload so the did-finish-load orphan sweep spares live PTYs until session restore (#5787).
     opts?.onBeforeRecoveryReload?.(mainWindow.webContents.id, trigger)
-    reloadMainWindow((error) => fail(reload, mainWindowLoadErrorCode(error)))
+    reloadMainWindow((error) => onLoadRejected(reload, mainWindowLoadErrorCode(error)))
     armTimer(reload)
+  }
+
+  // Why ERR_ABORTED is never a verdict: Chromium aborts a load whenever something supersedes it — this watchdog's
+  // own retry, a user navigation, a close race, another loadURL caller — and the replacement owns the outcome, so
+  // failing here would raise the undismissable prompt over a window that is fine, and a cold retry would stomp the
+  // load that replaced this one. Re-arming keeps the silence budget honest; capAt still bounds an abort that led
+  // nowhere, so a load that truly goes dark still escalates on timeout.
+  const onLoadRejected = (reload: RecoveryReload, errorCode: string): void => {
+    if (errorCode !== 'ERR_ABORTED') {
+      fail(reload, errorCode)
+      return
+    }
+    if (inFlight === reload) {
+      armTimer(reload)
+    }
   }
 
   const retryFrom = (reload: RecoveryReload): void => {
@@ -159,7 +174,7 @@ export function createRendererRecoveryReloadWatchdog(args: {
   }
 
   const fail = (reload: RecoveryReload, errorCode?: string): void => {
-    // Why: a superseded attempt still rejects (ERR_ABORTED); only the live one owns the outcome.
+    // Why: a superseded attempt can still report late; only the live one owns the outcome.
     if (inFlight !== reload) {
       return
     }
